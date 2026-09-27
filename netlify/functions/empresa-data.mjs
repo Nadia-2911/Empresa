@@ -6,50 +6,53 @@
 // desde cualquier dispositivo: ya no dependen de localStorage de un solo
 // navegador, sino de este almacén en la nube ligado a su cuenta.
 //
+// Usa el mecanismo "clásico" de Netlify Functions: cuando el navegador manda
+// el token de sesión (JWT) en el header "Authorization: Bearer ...", Netlify
+// lo valida automáticamente y lo expone aquí como context.clientContext.user.
+// Esto es lo que hace pareja con netlify-identity-widget en el frontend.
+//
 // GET  /api/empresa-data  -> devuelve el último snapshot guardado (o null)
 // POST /api/empresa-data  -> reemplaza el snapshot guardado por el del body
 
-import { getUser } from '@netlify/identity';
 import { getStore } from '@netlify/blobs';
 
-export default async (req, context) => {
-  const user = await getUser();
+export async function handler(event, context) {
+  const user = context.clientContext && context.clientContext.user;
 
   if (!user) {
-    return new Response(JSON.stringify({ error: 'No autenticado' }), {
-      status: 401,
+    return {
+      statusCode: 401,
       headers: { 'Content-Type': 'application/json' },
-    });
+      body: JSON.stringify({ error: 'No autenticado' }),
+    };
   }
 
   const store = getStore('empresa-data');
-  const key = `usuario-${user.id}`;
+  const key = `usuario-${user.sub}`;
 
-  if (req.method === 'GET') {
+  if (event.httpMethod === 'GET') {
     const data = await store.get(key, { type: 'json' });
-    return new Response(JSON.stringify(data || null), {
-      status: 200,
+    return {
+      statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-    });
+      body: JSON.stringify(data || null),
+    };
   }
 
-  if (req.method === 'POST') {
+  if (event.httpMethod === 'POST') {
     let body;
     try {
-      body = await req.json();
+      body = JSON.parse(event.body || '{}');
     } catch (e) {
-      return new Response(JSON.stringify({ error: 'JSON inválido' }), { status: 400 });
+      return { statusCode: 400, body: JSON.stringify({ error: 'JSON inválido' }) };
     }
     await store.setJSON(key, body);
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
+    return {
+      statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-    });
+      body: JSON.stringify({ ok: true }),
+    };
   }
 
-  return new Response('Method not allowed', { status: 405 });
-};
-
-// Expone la función en /api/empresa-data en vez de la ruta larga por defecto
-// (/.netlify/functions/empresa-data)
-export const config = { path: '/api/empresa-data' };
+  return { statusCode: 405, body: 'Method not allowed' };
+}
