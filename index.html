@@ -138,16 +138,32 @@
         // hace el proceso inverso: se descarga ese paquete y se escribe en localStorage
         // ANTES de montar la app, para que la lógica original la lea como si fuera local.
         window.__cloudSyncEnabled = false;
+        window.__cloudDirty = false;
+        window.__isPulling = false;
         (function () {
             const originalSetItem = localStorage.setItem.bind(localStorage);
             let pushTimer = null;
             localStorage.setItem = function (key, value) {
                 originalSetItem(key, value);
-                if (window.__cloudSyncEnabled && key.startsWith('empresa_')) {
+                if (window.__cloudSyncEnabled && !window.__isPulling && key.startsWith('empresa_')) {
+                    window.__cloudDirty = true;
+                    window.dispatchEvent(new CustomEvent('cloud-sync', { detail: { status: 'pending' } }));
                     clearTimeout(pushTimer);
                     pushTimer = setTimeout(window.__pushToCloud, 1200);
                 }
             };
+
+            // Si el usuario cierra la pestaña o cambia de app antes de que se cumpla el
+            // retraso de arriba, forzamos el envío de inmediato (con keepalive para que
+            // el navegador lo complete aunque la página ya se esté cerrando).
+            const flushIfDirty = () => {
+                if (window.__cloudDirty) {
+                    clearTimeout(pushTimer);
+                    window.__pushToCloud(true);
+                }
+            };
+            document.addEventListener('visibilitychange', () => { if (document.hidden) flushIfDirty(); });
+            window.addEventListener('pagehide', flushIfDirty);
         })();
 
         window.__getAuthHeaders = async function () {
@@ -161,8 +177,9 @@
             }
         };
 
-        window.__pushToCloud = async function () {
+        window.__pushToCloud = async function (keepalive = false) {
             try {
+                window.dispatchEvent(new CustomEvent('cloud-sync', { detail: { status: 'saving' } }));
                 const profiles = JSON.parse(localStorage.getItem('empresa_profiles_list') || '[]');
                 const activeProfileId = localStorage.getItem('empresa_active_profile_id');
                 const dataByProfile = {};
@@ -177,15 +194,20 @@
                 const authHeaders = await window.__getAuthHeaders();
                 await fetch('/api/empresa-data', {
                     method: 'POST',
+                    keepalive,
                     headers: { 'Content-Type': 'application/json', ...authHeaders },
                     body: JSON.stringify({ profiles, activeProfileId, dataByProfile }),
                 });
+                window.__cloudDirty = false;
+                window.dispatchEvent(new CustomEvent('cloud-sync', { detail: { status: 'saved', at: Date.now() } }));
             } catch (e) {
                 console.error('No se pudo sincronizar con la nube:', e);
+                window.dispatchEvent(new CustomEvent('cloud-sync', { detail: { status: 'error' } }));
             }
         };
 
         window.__pullFromCloud = async function () {
+            window.__isPulling = true;
             try {
                 const authHeaders = await window.__getAuthHeaders();
                 const res = await fetch('/api/empresa-data', { headers: authHeaders });
@@ -202,6 +224,8 @@
                 });
             } catch (e) {
                 console.error('No se pudo traer datos de la nube:', e);
+            } finally {
+                window.__isPulling = false;
             }
         };
 
@@ -335,6 +359,64 @@
         }
 
         const { profiles: initialProfilesList, activeId: initialActiveProfileId } = initializeProfileSystem();
+
+        // Tarjeta de cuenta: cerrar sesión, estado de sincronización y actualizar manualmente
+        function CuentaCard() {
+            const [syncStatus, setSyncStatus] = useState('saved'); // pending | saving | saved | error
+            const [refreshing, setRefreshing] = useState(false);
+            const userEmail = (window.netlifyIdentity && window.netlifyIdentity.currentUser() && window.netlifyIdentity.currentUser().email) || '';
+
+            useEffect(() => {
+                const onSync = (e) => setSyncStatus(e.detail.status);
+                window.addEventListener('cloud-sync', onSync);
+                return () => window.removeEventListener('cloud-sync', onSync);
+            }, []);
+
+            const statusLabel = {
+                pending: 'Cambios sin guardar todavía...',
+                saving: 'Guardando en la nube...',
+                saved: 'Todo guardado en la nube ✓',
+                error: 'No se pudo guardar. Revisa tu conexión.',
+            }[syncStatus];
+
+            const statusColor = {
+                pending: 'text-amber-500',
+                saving: 'text-amber-500',
+                saved: 'text-green-600',
+                error: 'text-red-500',
+            }[syncStatus];
+
+            const handleRefresh = async () => {
+                setRefreshing(true);
+                await window.__pullFromCloud();
+                window.location.reload();
+            };
+
+            return (
+                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                    <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2 mb-1">
+                        <Icon name="cloud" className="text-primary" /> Cuenta
+                    </h2>
+                    {userEmail && <p className="text-xs text-slate-400 font-bold mb-4">{userEmail}</p>}
+                    <p className={`text-xs font-bold mb-4 ${statusColor}`}>{statusLabel}</p>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={handleRefresh}
+                            disabled={refreshing}
+                            className="px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest bg-slate-100 text-slate-600 disabled:opacity-50"
+                        >
+                            {refreshing ? 'Actualizando...' : 'Actualizar datos de otros dispositivos'}
+                        </button>
+                        <button
+                            onClick={() => window.netlifyIdentity && window.netlifyIdentity.logout()}
+                            className="px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest bg-red-50 text-red-500"
+                        >
+                            Cerrar sesión
+                        </button>
+                    </div>
+                </div>
+            );
+        }
 
         function App() {
             // Perfiles (Negocios)
@@ -786,9 +868,10 @@
             // Calcula los totales base (ventaBruta, costo, renta, etc.) para un filtro de pago dado.
             // Se separó de calculateStats para poder recalcular una base distinta por cada
             // estadística personalizada cuando ésta restringe su propio método de pago.
-            const calculateBaseStats = (dateFilt, payFilt, catFilt) => {
+            const calculateBaseStats = (dateFilt, payFilt, catFilt, minIsoDate = null) => {
                 let s = { ventaBruta: 0, costoProduccion: 0, renta: 0, gananciaNeta: 0, items: 0, ventaSinRenta: 0, totalVentasNum: 0 };
                 sales.forEach(sale => {
+                    if (minIsoDate && sale.isoDate && sale.isoDate < minIsoDate) return;
                     if (!matchesDateFilter(sale.isoDate, sale.date, dateFilt)) return;
                     if (!payFilt.includes('todos') && !payFilt.includes(sale.paymentMethod)) return;
                     
@@ -843,7 +926,14 @@
                     // Si la estadística tiene métodos de pago propios, se recalcula la base
                     // usando SOLO esos métodos, sin importar el filtro de pago del reporte.
                     const hasOwnPayFilter = Array.isArray(stat.paymentMethods) && stat.paymentMethods.length > 0;
-                    const baseForStat = hasOwnPayFilter ? calculateFullStatsMap(dateFilt, stat.paymentMethods, catFilt) : resultsMap;
+                    // Además, si la estadística tiene fecha de creación, su propia base (ventaBruta,
+                    // costoProduccion, etc.) se recalcula excluyendo ventas anteriores a esa fecha,
+                    // para que no afecte reportes de periodos previos a su creación. Las demás
+                    // estadísticas personalizadas usadas como fuente conservan su propio cálculo ya hecho.
+                    const cutoffBase = stat.createdAt
+                        ? calculateBaseStats(dateFilt, hasOwnPayFilter ? stat.paymentMethods : payFilt, catFilt, stat.createdAt)
+                        : (hasOwnPayFilter ? calculateFullStatsMap(dateFilt, stat.paymentMethods, catFilt) : null);
+                    const baseForStat = cutoffBase ? { ...resultsMap, ...cutoffBase } : resultsMap;
 
                     const base1 = baseForStat[stat.source] || 0;
                     const base2 = baseForStat[stat.source2] || 0;
@@ -862,15 +952,16 @@
 
             const stats = useMemo(() => calculateStats(reportDateFilter, reportPaymentFilter, reportCategoryFilter), [sales, reportDateFilter, reportPaymentFilter, reportCategoryFilter, settings]);
             
-            const soldProductsData = useMemo(() => {
+            const computeSoldProductsMap = (dateFilt, payFilt, catFilt, minIsoDate = null) => {
                 const map = new Map();
                 sales.forEach(sale => {
-                    if (!matchesDateFilter(sale.isoDate, sale.date, reportDateFilter)) return;
-                    if (!reportPaymentFilter.includes('todos') && !reportPaymentFilter.includes(sale.paymentMethod)) return;
+                    if (minIsoDate && sale.isoDate && sale.isoDate < minIsoDate) return;
+                    if (!matchesDateFilter(sale.isoDate, sale.date, dateFilt)) return;
+                    if (!payFilt.includes('todos') && !payFilt.includes(sale.paymentMethod)) return;
 
                     sale.items.forEach(item => {
                         const itemCats = Array.isArray(item.product.category) ? item.product.category : [item.product.category];
-                        if (reportCategoryFilter.includes('todos') || itemCats.some(c => reportCategoryFilter.includes(c))) {
+                        if (catFilt.includes('todos') || itemCats.some(c => catFilt.includes(c))) {
                             const pid = item.product.id;
                             const currentRent = item.product.rent ?? getRentValue(item.product.price);
                             
@@ -887,8 +978,37 @@
                         }
                     });
                 });
+                return map;
+            };
+
+            const soldProductsData = useMemo(() => {
+                const map = computeSoldProductsMap(reportDateFilter, reportPaymentFilter, reportCategoryFilter);
                 return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
             }, [sales, reportDateFilter, reportPaymentFilter, reportCategoryFilter, settings]);
+
+            // Para cada estadística personalizada con fecha de creación, un mapa de productos
+            // calculado SOLO con ventas posteriores a esa fecha (para no inflar reportes de
+            // periodos anteriores a que la estadística existiera).
+            const soldProductsDataByStat = useMemo(() => {
+                const cache = new Map();
+                settings.customStats.forEach(cstat => {
+                    if (cstat.createdAt) {
+                        cache.set(cstat.id, computeSoldProductsMap(reportDateFilter, reportPaymentFilter, reportCategoryFilter, cstat.createdAt));
+                    }
+                });
+                return cache;
+            }, [sales, reportDateFilter, reportPaymentFilter, reportCategoryFilter, settings.customStats]);
+
+            // Devuelve el valor formateado de una estadística personalizada para un producto de reporte,
+            // o null si esa estadística no existía todavía cuando se hicieron las ventas de ese producto
+            // en el periodo filtrado (en cuyo caso no debe sumarse ni mostrarse un número).
+            const getProductCustomStatDisplay = (p, cstat) => {
+                const cutoffMap = soldProductsDataByStat.get(cstat.id);
+                if (!cutoffMap) return formatMoney(getDynamicStatValue(p, null, true, cstat, true));
+                const restricted = cutoffMap.get(p.id);
+                if (!restricted) return '—';
+                return formatMoney(getDynamicStatValue(restricted, null, true, cstat, true));
+            };
 
             // PDF
             const handleExportPDF = () => {
@@ -936,9 +1056,9 @@
             const saveCustomStat = () => {
                 if (!isCustomStatValid) return;
                 if (editingStatId) {
-                    setSettings(prev => ({ ...prev, customStats: prev.customStats.map(c => c.id === editingStatId ? { ...newStat, id: editingStatId } : c) }));
+                    setSettings(prev => ({ ...prev, customStats: prev.customStats.map(c => c.id === editingStatId ? { ...newStat, id: editingStatId, createdAt: c.createdAt || new Date().toISOString() } : c) }));
                 } else {
-                    setSettings(prev => ({ ...prev, customStats: [...prev.customStats, { ...newStat, id: `custom_${Date.now()}` }] }));
+                    setSettings(prev => ({ ...prev, customStats: [...prev.customStats, { ...newStat, id: `custom_${Date.now()}`, createdAt: new Date().toISOString() }] }));
                 }
                 cancelEditCustomStat();
             };
@@ -1061,7 +1181,7 @@
                                         ))}
                                         {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id)).map(cstat => (
                                             <td key={cstat.id} style={{fontWeight: '700'}}>
-                                                {formatMoney(getDynamicStatValue(p, null, true, cstat, true))}
+                                                {getProductCustomStatDisplay(p, cstat)}
                                             </td>
                                         ))}
                                     </tr>
@@ -1075,6 +1195,8 @@
                         {/* PERFIL */}
                         {activeTab === 'perfil' && (
                             <div className="space-y-6 animate-fade-in">
+                                <CuentaCard />
+
                                 <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
                                     <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2 mb-4">
                                         <Icon name="briefcase" className="text-primary" /> Mis Negocios
@@ -1784,12 +1906,15 @@
                                                                     <p className={stat.color}>{formatMoney(getDynamicStatValue(sale, stat.id))}</p>
                                                                 </div>
                                                             ))}
-                                                            {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id) && (!Array.isArray(cstat.paymentMethods) || cstat.paymentMethods.length === 0 || cstat.paymentMethods.includes(sale.paymentMethod))).map((cstat, idx) => (
+                                                            {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id) && (!Array.isArray(cstat.paymentMethods) || cstat.paymentMethods.length === 0 || cstat.paymentMethods.includes(sale.paymentMethod))).map((cstat, idx) => {
+                                                                const existedAtSaleTime = !cstat.createdAt || !sale.isoDate || sale.isoDate >= cstat.createdAt;
+                                                                return (
                                                                 <div key={`c-${idx}`} className="min-w-[70px]">
                                                                     <p className="text-slate-400 uppercase text-[8px] leading-tight mb-0.5"><Icon name="zap" className="w-2 h-2 inline text-primary" /> {cstat.name}</p>
-                                                                    <p className="text-slate-700">{formatMoney(getDynamicStatValue(sale, null, true, cstat))}</p>
+                                                                    <p className="text-slate-700">{existedAtSaleTime ? formatMoney(getDynamicStatValue(sale, null, true, cstat)) : '—'}</p>
                                                                 </div>
-                                                            ))}
+                                                                );
+                                                            })}
                                                         </div>
                                                     </div>
                                                     <div className="flex gap-2">
@@ -1865,7 +1990,7 @@
                                                     ))}
                                                     {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id)).map(cstat => (
                                                         <td key={cstat.id} className="text-xs font-bold text-slate-700">
-                                                            {formatMoney(getDynamicStatValue(p, null, true, cstat, true))}
+                                                            {getProductCustomStatDisplay(p, cstat)}
                                                         </td>
                                                     ))}
                                                 </tr>
@@ -2154,17 +2279,7 @@
                 );
             }
 
-            return (
-                <div className="relative">
-                    <button
-                        onClick={() => window.netlifyIdentity && window.netlifyIdentity.logout()}
-                        className="fixed top-3 right-3 z-[100] bg-white/90 backdrop-blur-md shadow-md text-slate-500 text-[9px] font-black uppercase px-3 py-2 rounded-xl"
-                    >
-                        Cerrar sesión
-                    </button>
-                    <App />
-                </div>
-            );
+            return <App />;
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
