@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
     
     <!-- Configuración nativa de Tailwind para colores dinámicos -->
     <script>
@@ -149,6 +150,17 @@
             };
         })();
 
+        window.__getAuthHeaders = async function () {
+            try {
+                const user = window.netlifyIdentity && window.netlifyIdentity.currentUser();
+                if (!user) return {};
+                const token = await user.jwt();
+                return { Authorization: `Bearer ${token}` };
+            } catch (e) {
+                return {};
+            }
+        };
+
         window.__pushToCloud = async function () {
             try {
                 const profiles = JSON.parse(localStorage.getItem('empresa_profiles_list') || '[]');
@@ -162,10 +174,10 @@
                         transferData: JSON.parse(localStorage.getItem(`empresa_transfer_data__${p.id}`) || 'null'),
                     };
                 });
+                const authHeaders = await window.__getAuthHeaders();
                 await fetch('/api/empresa-data', {
                     method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
                     body: JSON.stringify({ profiles, activeProfileId, dataByProfile }),
                 });
             } catch (e) {
@@ -175,7 +187,8 @@
 
         window.__pullFromCloud = async function () {
             try {
-                const res = await fetch('/api/empresa-data', { credentials: 'include' });
+                const authHeaders = await window.__getAuthHeaders();
+                const res = await fetch('/api/empresa-data', { headers: authHeaders });
                 if (!res.ok) return;
                 const cloud = await res.json();
                 if (!cloud) return;
@@ -2068,61 +2081,46 @@
         // ===== PANTALLA DE ACCESO (Netlify Identity) =====
         function AuthGate() {
             const [status, setStatus] = useState('loading'); // loading | login | ready
-            const [identityApi, setIdentityApi] = useState(null);
-            const [mode, setMode] = useState('login'); // login | signup
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [fullName, setFullName] = useState('');
             const [authError, setAuthError] = useState('');
-            const [busy, setBusy] = useState(false);
 
             useEffect(() => {
-                (async () => {
-                    try {
-                        const api = await import('https://esm.sh/@netlify/identity?bundle');
-                        setIdentityApi(api);
-                        try { await api.handleAuthCallback(); } catch (e) { /* no había callback pendiente */ }
-                        const user = await api.getUser();
-                        if (user) {
-                            window.__cloudSyncEnabled = true;
-                            await window.__pullFromCloud();
-                            setStatus('ready');
-                        } else {
-                            setStatus('login');
-                        }
-                    } catch (e) {
-                        console.error('Error inicializando Netlify Identity:', e);
-                        setAuthError('No se pudo cargar el sistema de acceso. Revisa tu conexión.');
-                        setStatus('login');
-                    }
-                })();
-            }, []);
+                const identity = window.netlifyIdentity;
+                if (!identity) {
+                    setAuthError('No se pudo cargar el sistema de acceso (netlify-identity-widget). Revisa tu conexión.');
+                    setStatus('login');
+                    return;
+                }
 
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                if (!identityApi) return;
-                setBusy(true);
-                setAuthError('');
-                try {
-                    if (mode === 'login') {
-                        await identityApi.login(email, password);
-                    } else {
-                        await identityApi.signup(email, password, { full_name: fullName });
-                    }
-                    const user = await identityApi.getUser();
+                identity.on('init', async (user) => {
                     if (user) {
                         window.__cloudSyncEnabled = true;
                         await window.__pullFromCloud();
                         setStatus('ready');
                     } else {
-                        setAuthError('Cuenta creada. Revisa tu correo para confirmarla antes de entrar.');
+                        setStatus('login');
                     }
-                } catch (err) {
-                    setAuthError(err.message || 'No se pudo completar la operación.');
-                } finally {
-                    setBusy(false);
-                }
-            };
+                });
+
+                identity.on('login', async (user) => {
+                    window.__cloudSyncEnabled = true;
+                    await window.__pullFromCloud();
+                    setStatus('ready');
+                    identity.close();
+                });
+
+                identity.on('logout', () => {
+                    window.__cloudSyncEnabled = false;
+                    window.location.reload();
+                });
+
+                identity.on('error', (err) => {
+                    console.error('Error de Netlify Identity:', err);
+                    setAuthError('Ocurrió un error con el inicio de sesión.');
+                });
+
+                // init() dispara el evento 'init' de arriba con el usuario actual (o null)
+                identity.init();
+            }, []);
 
             if (status === 'loading') {
                 return (
@@ -2135,28 +2133,23 @@
             if (status === 'login') {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-                        <form onSubmit={handleSubmit} className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-4">
-                            <h1 className="text-xl font-black text-slate-800 text-center mb-2">
-                                {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
-                            </h1>
-                            {mode === 'signup' && (
-                                <input type="text" placeholder="Nombre" value={fullName} onChange={e => setFullName(e.target.value)}
-                                    className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" required />
-                            )}
-                            <input type="email" placeholder="Correo" value={email} onChange={e => setEmail(e.target.value)}
-                                className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" required />
-                            <input type="password" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)}
-                                className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" required minLength={6} />
+                        <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-4 text-center">
+                            <h1 className="text-xl font-black text-slate-800 mb-2">Bienvenido</h1>
+                            <p className="text-slate-400 text-sm font-bold mb-4">Inicia sesión o crea una cuenta para entrar a tu negocio.</p>
                             {authError && <p className="text-red-500 text-xs font-bold">{authError}</p>}
-                            <button type="submit" disabled={busy}
-                                className="w-full bg-primary text-white py-3 rounded-2xl font-black uppercase text-xs tracking-widest disabled:opacity-50">
-                                {busy ? 'Un momento...' : (mode === 'login' ? 'Entrar' : 'Registrarme')}
+                            <button
+                                onClick={() => window.netlifyIdentity && window.netlifyIdentity.open('login')}
+                                className="w-full bg-primary text-white py-3 rounded-2xl font-black uppercase text-xs tracking-widest"
+                            >
+                                Iniciar sesión
                             </button>
-                            <button type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setAuthError(''); }}
-                                className="w-full text-slate-400 text-xs font-bold">
-                                {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+                            <button
+                                onClick={() => window.netlifyIdentity && window.netlifyIdentity.open('signup')}
+                                className="w-full text-slate-400 text-xs font-bold"
+                            >
+                                ¿No tienes cuenta? Regístrate
                             </button>
-                        </form>
+                        </div>
                     </div>
                 );
             }
@@ -2164,7 +2157,7 @@
             return (
                 <div className="relative">
                     <button
-                        onClick={async () => { await identityApi.logout(); window.__cloudSyncEnabled = false; window.location.reload(); }}
+                        onClick={() => window.netlifyIdentity && window.netlifyIdentity.logout()}
                         className="fixed top-3 right-3 z-[100] bg-white/90 backdrop-blur-md shadow-md text-slate-500 text-[9px] font-black uppercase px-3 py-2 rounded-xl"
                     >
                         Cerrar sesión
