@@ -1,0 +1,2181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nombre de Empresa App</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Configuración nativa de Tailwind para colores dinámicos -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: 'var(--primary)',
+                        'primary-glow': 'var(--primary-glow)'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+    <!-- Librería para generar PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        
+        .header-logo {
+            filter: brightness(0) invert(1);
+        }
+
+        .bank-card-container {
+            background: #1e293b; 
+            color: white;
+            border-radius: 2rem;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        .bank-card-input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.75rem;
+            padding: 0.75rem;
+            width: 100%;
+            outline: none;
+            transition: all 0.2s;
+            color: white;
+        }
+
+        .bank-card-input:focus {
+            background: rgba(255, 255, 255, 1);
+            border-color: var(--primary);
+        }
+
+        .sold-table-container {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .sold-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+            min-width: 650px; 
+        }
+
+        .sold-table th {
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 9px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #94a3b8;
+            letter-spacing: 0.05em;
+        }
+
+        .sold-table td {
+            padding: 14px 16px;
+            background: white;
+            vertical-align: middle;
+        }
+
+        .sold-table tr td:first-child { border-radius: 1rem 0 0 1rem; }
+        .sold-table tr td:last-child { border-radius: 0 1rem 1rem 0; }
+        
+        .sold-table-container::-webkit-scrollbar { height: 4px; }
+        .sold-table-container::-webkit-scrollbar-track { background: transparent; }
+        .sold-table-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+        #pdf-content { background: white; color: #1e293b; }
+        .pdf-card { border: 1px solid #f1f5f9; background: #f8fafc; border-radius: 12px; padding: 12px; }
+        .pdf-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+        .pdf-table th { background: var(--primary); color: white; padding: 8px; text-align: left; }
+        .pdf-table td { padding: 8px; border-bottom: 1px solid #f1f5f9; }
+
+        /* Normalizar input de color para versión Móvil */
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            padding: 0;
+            background: none;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: none;
+            border-radius: 0.375rem; 
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // ===== SINCRONIZACIÓN CON LA NUBE (Netlify Blobs vía Netlify Functions) =====
+        // Estrategia: seguimos usando localStorage exactamente como antes (no se tocó
+        // ninguna lógica de guardado existente), pero además "espiamos" cada escritura
+        // a localStorage y, tras un pequeño retraso (debounce), empaquetamos TODOS los
+        // perfiles/negocios y los subimos a /api/empresa-data. Al iniciar sesión, se
+        // hace el proceso inverso: se descarga ese paquete y se escribe en localStorage
+        // ANTES de montar la app, para que la lógica original la lea como si fuera local.
+        window.__cloudSyncEnabled = false;
+        (function () {
+            const originalSetItem = localStorage.setItem.bind(localStorage);
+            let pushTimer = null;
+            localStorage.setItem = function (key, value) {
+                originalSetItem(key, value);
+                if (window.__cloudSyncEnabled && key.startsWith('empresa_')) {
+                    clearTimeout(pushTimer);
+                    pushTimer = setTimeout(window.__pushToCloud, 1200);
+                }
+            };
+        })();
+
+        window.__pushToCloud = async function () {
+            try {
+                const profiles = JSON.parse(localStorage.getItem('empresa_profiles_list') || '[]');
+                const activeProfileId = localStorage.getItem('empresa_active_profile_id');
+                const dataByProfile = {};
+                profiles.forEach(p => {
+                    dataByProfile[p.id] = {
+                        settings: JSON.parse(localStorage.getItem(`empresa_settings__${p.id}`) || 'null'),
+                        products: JSON.parse(localStorage.getItem(`empresa_products__${p.id}`) || 'null'),
+                        sales: JSON.parse(localStorage.getItem(`empresa_sales__${p.id}`) || 'null'),
+                        transferData: JSON.parse(localStorage.getItem(`empresa_transfer_data__${p.id}`) || 'null'),
+                    };
+                });
+                await fetch('/api/empresa-data', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profiles, activeProfileId, dataByProfile }),
+                });
+            } catch (e) {
+                console.error('No se pudo sincronizar con la nube:', e);
+            }
+        };
+
+        window.__pullFromCloud = async function () {
+            try {
+                const res = await fetch('/api/empresa-data', { credentials: 'include' });
+                if (!res.ok) return;
+                const cloud = await res.json();
+                if (!cloud) return;
+                localStorage.setItem('empresa_profiles_list', JSON.stringify(cloud.profiles || []));
+                if (cloud.activeProfileId) localStorage.setItem('empresa_active_profile_id', cloud.activeProfileId);
+                Object.entries(cloud.dataByProfile || {}).forEach(([pid, d]) => {
+                    if (d.settings) localStorage.setItem(`empresa_settings__${pid}`, JSON.stringify(d.settings));
+                    if (d.products) localStorage.setItem(`empresa_products__${pid}`, JSON.stringify(d.products));
+                    if (d.sales) localStorage.setItem(`empresa_sales__${pid}`, JSON.stringify(d.sales));
+                    if (d.transferData) localStorage.setItem(`empresa_transfer_data__${pid}`, JSON.stringify(d.transferData));
+                });
+            } catch (e) {
+                console.error('No se pudo traer datos de la nube:', e);
+            }
+        };
+
+        // Configuración por defecto
+        const defaultSettings = {
+            companyName: 'Nombre de Empresa',
+            businessType: 'Gestión de Negocio',
+            logoUrl: 'logo_blanco.png',
+            primaryColor: '#54a4a5',
+            rentPercentage: 10,
+            categories: [
+                { id: 'categoria-1', name: 'Categoría 1', color: '#f472b6', textColor: '#831843' },
+                { id: 'categoria-2', name: 'Categoría 2', color: '#38bdf8', textColor: '#0c4a6e' }
+            ],
+            payments: [
+                { id: 'efectivo', name: 'Efectivo', color: '#eab308', textColor: '#ffffff' },
+                { id: 'transferencia', name: 'Transferencia', color: '#9333ea', textColor: '#ffffff' }
+            ],
+            hiddenStats: [],
+            reportHiddenStats: [],
+            statOverrides: {},
+            customStats: [],
+            allowMultiFilter: false
+        };
+
+        const genericProducts = [
+            { id: 'prod1', name: 'Producto Genérico 1', category: ['categoria-1'], cost: 50, price: 150, rent: 15, profit: 85, stock: 15 },
+            { id: 'prod2', name: 'Producto Genérico 2', category: ['categoria-2'], cost: 80, price: 200, rent: 20, profit: 100, stock: 8 }
+        ];
+
+        const genericSales = [
+            {
+                id: '220526001',
+                date: new Date().toLocaleString(),
+                isoDate: new Date().toISOString(),
+                items: [{ product: genericProducts[0], quantity: 2 }],
+                paymentMethod: 'efectivo',
+                totalVenta: 300,
+                totalCosto: 100,
+                totalRenta: 30,
+                totalGanancia: 170,
+                totalItems: 2
+            }
+        ];
+
+        // Utilidad de Fecha
+        const getWeekNumber = (d) => {
+            const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay()||7));
+            const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+            const weekNo = Math.ceil(( ( (date - yearStart) / 86400000) + 1)/7);
+            return date.getUTCFullYear() + "-W" + String(weekNo).padStart(2, '0');
+        };
+
+        const parseDateFallback = (dStr) => {
+            if(!dStr) return new Date();
+            let d = new Date(dStr);
+            if(!isNaN(d)) return d;
+            const parts = dStr.split(',')[0].split('/');
+            if(parts.length === 3) return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+            return new Date();
+        };
+
+        const matchesDateFilter = (isoStr, legacyStr, filter) => {
+            if (filter.mode === 'global') return true;
+            const date = isoStr ? new Date(isoStr) : parseDateFallback(legacyStr);
+            if (isNaN(date)) return true;
+
+            if (filter.mode === 'day') return filter.value && date.toISOString().split('T')[0] === filter.value;
+            if (filter.mode === 'month') return filter.value && date.toISOString().substring(0,7) === filter.value;
+            if (filter.mode === 'week') return filter.value && getWeekNumber(date) === filter.value;
+            if (filter.mode === 'range') {
+                if (!filter.start || !filter.end) return true;
+                const s = new Date(filter.start); s.setHours(0,0,0,0);
+                const e = new Date(filter.end); e.setHours(23,59,59,999);
+                return date >= s && date <= e;
+            }
+            return true;
+        };
+
+        const getFilterDateLabel = (filter) => {
+            if (filter.mode === 'global') return 'Histórico Global';
+            if (filter.mode === 'day') return `Día: ${filter.value}`;
+            if (filter.mode === 'week') return `Semana: ${filter.value}`;
+            if (filter.mode === 'month') return `Mes: ${filter.value}`;
+            if (filter.mode === 'range') return `Del ${filter.start} al ${filter.end}`;
+            return 'Histórico Global';
+        };
+
+        // COMPONENTE DE ÍCONO SEGURO PARA REACT
+        const Icon = ({ name, className }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (iconRef.current && window.lucide) {
+                    iconRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`;
+                    window.lucide.createIcons({ root: iconRef.current });
+                }
+            }, [name, className]);
+            return <span ref={iconRef} style={{ display: 'contents' }} />;
+        };
+
+        // ===== SISTEMA DE PERFILES (MÚLTIPLES NEGOCIOS) =====
+        // Cada perfil (negocio) guarda su propia info bajo una llave de localStorage distinta,
+        // así los datos de un emprendimiento nunca se mezclan con los de otro.
+        const PROFILES_LIST_KEY = 'empresa_profiles_list';
+        const ACTIVE_PROFILE_KEY = 'empresa_active_profile_id';
+        const getProfileKey = (base, profileId) => `${base}__${profileId}`;
+
+        function initializeProfileSystem() {
+            let profiles = [];
+            try { profiles = JSON.parse(localStorage.getItem(PROFILES_LIST_KEY)) || []; } catch (e) { profiles = []; }
+
+            if (!profiles.length) {
+                // Migración: si ya existían datos con el formato anterior (sin perfiles),
+                // se conservan intactos dentro de un primer perfil por defecto.
+                const legacyId = 'perfil_1';
+                ['empresa_settings', 'empresa_products', 'empresa_sales', 'empresa_transfer_data'].forEach(key => {
+                    const existing = localStorage.getItem(key);
+                    if (existing !== null) localStorage.setItem(getProfileKey(key, legacyId), existing);
+                });
+                profiles = [{ id: legacyId, name: 'Mi Negocio' }];
+                localStorage.setItem(PROFILES_LIST_KEY, JSON.stringify(profiles));
+            }
+
+            let activeId = localStorage.getItem(ACTIVE_PROFILE_KEY);
+            if (!activeId || !profiles.find(p => p.id === activeId)) {
+                activeId = profiles[0].id;
+                localStorage.setItem(ACTIVE_PROFILE_KEY, activeId);
+            }
+            return { profiles, activeId };
+        }
+
+        const { profiles: initialProfilesList, activeId: initialActiveProfileId } = initializeProfileSystem();
+
+        function App() {
+            // Perfiles (Negocios)
+            const [profiles, setProfiles] = useState(initialProfilesList);
+            const [activeProfileId, setActiveProfileId] = useState(initialActiveProfileId);
+
+            // Configuración
+            const [settings, setSettings] = useState(() => {
+                const saved = localStorage.getItem(getProfileKey('empresa_settings', initialActiveProfileId));
+                return saved ? {...defaultSettings, ...JSON.parse(saved)} : defaultSettings;
+            });
+
+            useEffect(() => {
+                localStorage.setItem(getProfileKey('empresa_settings', activeProfileId), JSON.stringify(settings));
+                document.documentElement.style.setProperty('--primary', settings.primaryColor);
+                document.documentElement.style.setProperty('--primary-glow', settings.primaryColor + '66');
+            }, [settings, activeProfileId]);
+
+            // Datos Base (con mapeo robusto para asegurar que category es array)
+            const [products, setProducts] = useState(() => {
+                const saved = localStorage.getItem(getProfileKey('empresa_products', initialActiveProfileId));
+                if (saved) {
+                    return JSON.parse(saved).map(p => ({...p, category: Array.isArray(p.category) ? p.category : (p.category ? [p.category] : [])}));
+                }
+                return genericProducts;
+            });
+            const [sales, setSales] = useState(() => {
+                const saved = localStorage.getItem(getProfileKey('empresa_sales', initialActiveProfileId));
+                return saved ? JSON.parse(saved) : genericSales;
+            });
+            const [transferData, setTransferData] = useState(() => {
+                const saved = localStorage.getItem(getProfileKey('empresa_transfer_data', initialActiveProfileId));
+                return saved ? JSON.parse(saved) : {banco:"Banco Genérico",cuenta:"1234 5678 9012 3456",clabe:"123456789012345678",titular:"Juan Pérez"};
+            });
+
+            useEffect(() => { localStorage.setItem(getProfileKey('empresa_products', activeProfileId), JSON.stringify(products)); }, [products, activeProfileId]);
+            useEffect(() => { localStorage.setItem(getProfileKey('empresa_sales', activeProfileId), JSON.stringify(sales)); }, [sales, activeProfileId]);
+            useEffect(() => { localStorage.setItem(getProfileKey('empresa_transfer_data', activeProfileId), JSON.stringify(transferData)); }, [transferData, activeProfileId]);
+
+            // Persistencia de la lista de perfiles y el perfil activo
+            useEffect(() => { localStorage.setItem(PROFILES_LIST_KEY, JSON.stringify(profiles)); }, [profiles]);
+            useEffect(() => { localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfileId); }, [activeProfileId]);
+
+            // Utilidad de Renta dinámica y Activar/Desactivar Renta
+            const hasRent = (settings.rentPercentage ?? 10) > 0;
+            const getRentValue = (price) => hasRent ? price * ((settings.rentPercentage ?? 10) / 100) : 0;
+
+            // UI Estados
+            const [activeTab, setActiveTab] = useState('ventas');
+            const [isAddingProduct, setIsAddingProduct] = useState(false);
+            const [editingProductId, setEditingProductId] = useState(null);
+            const [newProduct, setNewProduct] = useState({ name: '', category: settings.categories[0] ? [settings.categories[0].id] : [], cost: '', price: '', stock: '' });
+            
+            const [isCreatingSale, setIsCreatingSale] = useState(false);
+            const [editingSaleId, setEditingSaleId] = useState(null);
+            const [cart, setCart] = useState([]);
+            const [paymentMethod, setPaymentMethod] = useState(settings.payments[0]?.id || '');
+            const [selectedSaleReceipt, setSelectedSaleReceipt] = useState(null);
+            const [saleToDelete, setSaleToDelete] = useState(null);
+            const [productToDelete, setProductToDelete] = useState(null);
+            const [isEditingTransfer, setIsEditingTransfer] = useState(false);
+            const [copyStatus, setCopyStatus] = useState(false);
+            const [saleDate, setSaleDate] = useState(() => new Date().toISOString().slice(0, 16));
+
+            // Filtros Avanzados
+            const [productsListFilter, setProductsListFilter] = useState(['todos']);
+            const [productsStockSort, setProductsStockSort] = useState(null); // null | 'asc' | 'desc'
+            const [salesProductFilter, setSalesProductFilter] = useState('todos');
+            const [salesListFilter, setSalesListFilter] = useState(['todos']);
+            const [salesPaymentFilter, setSalesPaymentFilter] = useState(['todos']);
+            
+            // Filtro de Fecha Universal
+            const defaultDateFilter = { mode: 'global', value: '', start: '', end: '' };
+            const [salesDateFilter, setSalesDateFilter] = useState(defaultDateFilter);
+            const [reportDateFilter, setReportDateFilter] = useState(defaultDateFilter);
+            
+            const [reportCategoryFilter, setReportCategoryFilter] = useState(['todos']);
+            const [reportPaymentFilter, setReportPaymentFilter] = useState(['todos']);
+
+            // Estados del Perfil
+            const [newCat, setNewCat] = useState({ name: '', color: '#f472b6', textColor: '#ffffff' });
+            const [newPay, setNewPay] = useState({ name: '', color: '#eab308', textColor: '#ffffff' });
+            const [newStat, setNewStat] = useState({ name: '', type: 'percentage', source: 'ventaBruta', source2: 'ventaBruta', value: '', paymentMethods: [] });
+            const [editingStatId, setEditingStatId] = useState(null);
+            const [editingDefaultStatId, setEditingDefaultStatId] = useState(null);
+            const [defaultStatNameDraft, setDefaultStatNameDraft] = useState('');
+
+            // Estados de Gestión de Perfiles (Negocios)
+            const [newProfileName, setNewProfileName] = useState('');
+            const [editingProfile, setEditingProfile] = useState(null);
+            const [profileToDelete, setProfileToDelete] = useState(null);
+
+            const formatMoney = (amount) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount || 0);
+
+            const toggleFilter = (currentFilters, setFilters, value) => {
+                if (!settings.allowMultiFilter) {
+                    setFilters([value]);
+                    return;
+                }
+                if (value === 'todos') {
+                    setFilters(['todos']);
+                } else {
+                    let next = currentFilters.filter(f => f !== 'todos');
+                    if (next.includes(value)) {
+                        next = next.filter(f => f !== value);
+                        if (next.length === 0) next = ['todos'];
+                    } else {
+                        next = [...next, value];
+                    }
+                    setFilters(next);
+                }
+            };
+
+            // Cambia de negocio activo, cargando su propia información aislada
+            const switchProfile = (profileId) => {
+                if (profileId === activeProfileId) return;
+
+                const loadedSettings = (() => {
+                    const saved = localStorage.getItem(getProfileKey('empresa_settings', profileId));
+                    return saved ? {...defaultSettings, ...JSON.parse(saved)} : defaultSettings;
+                })();
+                const loadedProducts = (() => {
+                    const saved = localStorage.getItem(getProfileKey('empresa_products', profileId));
+                    if (saved) return JSON.parse(saved).map(p => ({...p, category: Array.isArray(p.category) ? p.category : (p.category ? [p.category] : [])}));
+                    return genericProducts;
+                })();
+                const loadedSales = (() => {
+                    const saved = localStorage.getItem(getProfileKey('empresa_sales', profileId));
+                    return saved ? JSON.parse(saved) : genericSales;
+                })();
+                const loadedTransfer = (() => {
+                    const saved = localStorage.getItem(getProfileKey('empresa_transfer_data', profileId));
+                    return saved ? JSON.parse(saved) : {banco:"Banco Genérico",cuenta:"1234 5678 9012 3456",clabe:"123456789012345678",titular:"Juan Pérez"};
+                })();
+
+                setActiveProfileId(profileId);
+                setSettings(loadedSettings);
+                setProducts(loadedProducts);
+                setSales(loadedSales);
+                setTransferData(loadedTransfer);
+
+                // Reiniciar estados transitorios de UI para no arrastrar nada del negocio anterior
+                setActiveTab('ventas');
+                setCart([]);
+                setIsCreatingSale(false);
+                setEditingSaleId(null);
+                setIsAddingProduct(false);
+                setEditingProductId(null);
+                setSelectedSaleReceipt(null);
+                setSaleToDelete(null);
+                setProductToDelete(null);
+                setProductsListFilter(['todos']);
+                setProductsStockSort(null);
+                setSalesListFilter(['todos']);
+                setSalesPaymentFilter(['todos']);
+                setReportCategoryFilter(['todos']);
+                setReportPaymentFilter(['todos']);
+                setSalesDateFilter(defaultDateFilter);
+                setReportDateFilter(defaultDateFilter);
+                setEditingStatId(null);
+                setEditingDefaultStatId(null);
+                setNewStat({name:'', type:'percentage', source:'ventaBruta', source2:'ventaBruta', value:'', paymentMethods: []});
+            };
+
+            const createProfile = (name) => {
+                const id = `perfil_${Date.now()}`;
+                setProfiles(prev => [...prev, { id, name }]);
+                switchProfile(id);
+            };
+
+            const confirmDeleteProfile = () => {
+                if (!profileToDelete || profiles.length <= 1) { setProfileToDelete(null); return; }
+                ['empresa_settings', 'empresa_products', 'empresa_sales', 'empresa_transfer_data'].forEach(k => localStorage.removeItem(getProfileKey(k, profileToDelete)));
+                const remaining = profiles.filter(p => p.id !== profileToDelete);
+                setProfiles(remaining);
+                if (activeProfileId === profileToDelete) switchProfile(remaining[0].id);
+                setProfileToDelete(null);
+            };
+
+            // Dinamismo de Estadísticas Principales basado en la renta
+            const baseDefaultStats = useMemo(() => [
+                { id: 'ventaBruta', name: 'Venta Bruta Total', color: 'text-primary' },
+                { id: 'totalVentasNum', name: 'Núm. de Ventas', color: 'text-primary' },
+                { id: 'items', name: 'Productos Vendidos', color: 'text-primary' },
+                ...(hasRent ? [{ id: 'ventaSinRenta', name: 'Venta sin Renta', color: 'text-indigo-600' }] : []),
+                { id: 'gananciaNeta', name: 'Ganancia Neta Libre', color: 'text-green-600' },
+                { id: 'costoProduccion', name: 'Inversión Materiales', color: 'text-red-400' },
+                ...(hasRent ? [{ id: 'renta', name: `Fondo Renta (${settings.rentPercentage ?? 10}%)`, color: 'text-orange-400' }] : [])
+            ], [hasRent, settings.rentPercentage]);
+
+            // Aplica los nombres personalizados (renombrados por el usuario) sobre las estadísticas automáticas
+            const activeDefaultStats = useMemo(() => baseDefaultStats.map(s => ({
+                ...s,
+                name: (settings.statOverrides && settings.statOverrides[s.id] && settings.statOverrides[s.id].name) || s.name
+            })), [baseDefaultStats, settings.statOverrides]);
+
+            const availableSources = useMemo(() => {
+                return [
+                    ...activeDefaultStats,
+                    ...settings.customStats.map(c => ({ id: c.id, name: c.name }))
+                ];
+            }, [activeDefaultStats, settings.customStats]);
+
+            // Estructuras para Tablas Dinámicas
+            const tableDisplayStats = activeDefaultStats.filter(s => !settings.hiddenStats.includes(s.id) && s.id !== 'totalVentasNum' && s.id !== 'items');
+            const productCardStats = tableDisplayStats.filter(s => s.id !== 'ventaBruta');
+
+            // Engine Dinámico de Estadísticas Unificado
+            const getDynamicStatValue = (entityObj, statId, isCustom = false, customStat = null, isProductRow = false) => {
+                const map = isProductRow ? {
+                    ventaBruta: entityObj.revenue || 0,
+                    costoProduccion: entityObj.cost || 0,
+                    renta: entityObj.rent || 0,
+                    gananciaNeta: entityObj.profit || 0,
+                    items: entityObj.quantity || 0,
+                    ventaSinRenta: entityObj.revenueNoRent || 0,
+                    totalVentasNum: 1
+                } : {
+                    ventaBruta: entityObj.totalVenta || 0,
+                    costoProduccion: entityObj.totalCosto || 0,
+                    renta: entityObj.totalRenta || 0,
+                    gananciaNeta: entityObj.totalGanancia || 0,
+                    items: entityObj.totalItems || 0,
+                    ventaSinRenta: (entityObj.totalVenta || 0) - (entityObj.totalRenta || 0),
+                    totalVentasNum: 1
+                };
+
+                if (!isCustom) return map[statId];
+
+                const evalMap = { ...map };
+                settings.customStats.forEach(stat => {
+                    const b1 = evalMap[stat.source] || 0;
+                    const b2 = evalMap[stat.source2] || 0;
+                    if (stat.type === 'percentage') evalMap[stat.id] = b1 * (parseFloat(stat.value) / 100);
+                    else if (stat.type === 'fixed') evalMap[stat.id] = parseFloat(stat.value);
+                    else if (stat.type === 'sum') evalMap[stat.id] = b1 + b2;
+                    else if (stat.type === 'subtract') evalMap[stat.id] = b1 - b2;
+                });
+                return evalMap[customStat.id] || 0;
+            };
+
+            // Funciones de Eliminación
+            const confirmDeleteSale = () => {
+                if (saleToDelete) {
+                    const sale = sales.find(s => s.id === saleToDelete);
+                    if (sale) {
+                        // Devolver el stock
+                        setProducts(prevProducts => prevProducts.map(p => {
+                            const item = sale.items.find(i => i.product.id === p.id);
+                            if (item) return { ...p, stock: (p.stock || 0) + item.quantity };
+                            return p;
+                        }));
+                    }
+                    setSales(prev => prev.filter(s => s.id !== saleToDelete));
+                    setSaleToDelete(null);
+                }
+            };
+
+            const confirmDeleteProduct = () => {
+                if (productToDelete) {
+                    setProducts(prev => prev.filter(p => p.id !== productToDelete));
+                    setProductToDelete(null);
+                }
+            };
+
+            const copyToClipboard = () => {
+                const text = `Hola! Estos son mis datos para el pago:\n\n*Titular:* ${transferData.titular}\n*Banco:* ${transferData.banco}\n*Cuenta/Tarjeta:* ${transferData.cuenta}\n*CLABE:* ${transferData.clabe}\n\n¡Gracias por apoyar a ${settings.companyName}! ✨`;
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    setCopyStatus(true);
+                    setTimeout(() => setCopyStatus(false), 2000);
+                } catch (err) { console.error('Error copiando', err); }
+                document.body.removeChild(textArea);
+            };
+
+            const getCatSettings = (id) => settings.categories.find(c => c.id === id) || { name: id, color: '#e2e8f0', textColor: '#475569' };
+            const getPaySettings = (id) => settings.payments.find(p => p.id === id) || { name: id, color: '#e2e8f0', textColor: '#475569' };
+
+            const handleLogoUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const MAX_WIDTH = 400; 
+                            const scaleSize = MAX_WIDTH / img.width;
+                            canvas.width = MAX_WIDTH;
+                            canvas.height = img.height * scaleSize;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            setSettings(prev => ({...prev, logoUrl: canvas.toDataURL('image/png', 0.8)}));
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const FilterButton = ({ id, current, label, type, onClick }) => {
+                const isSelected = Array.isArray(current) ? current.includes(id) : current === id;
+                const isAll = id === 'todos';
+                let bg = isSelected ? (isAll ? settings.primaryColor : (type === 'cat' ? getCatSettings(id).color : getPaySettings(id).color)) : 'transparent';
+                let color = isSelected ? (isAll ? '#fff' : (type === 'cat' ? getCatSettings(id).textColor : getPaySettings(id).textColor)) : '#94a3b8';
+                
+                return (
+                    <button 
+                        onClick={onClick}
+                        style={{ backgroundColor: bg, color: color }}
+                        className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${!isSelected && 'hover:bg-slate-200'} shadow-sm`}
+                    >
+                        {label}
+                    </button>
+                );
+            };
+
+            const DateFilterSelector = ({ filter, setFilter, label }) => (
+                <div className="flex-1 min-w-[200px]">
+                    <label className="text-[10px] font-black uppercase text-slate-400 block mb-2 tracking-widest">{label}</label>
+                    <div className="flex flex-col gap-2">
+                        <div className="relative">
+                            <select 
+                                value={filter.mode} 
+                                onChange={e => setFilter({...filter, mode: e.target.value})} 
+                                className="w-full bg-slate-50 border border-slate-200 text-slate-700 font-bold p-3 rounded-xl outline-none focus:ring-2 focus:ring-primary appearance-none"
+                            >
+                                <option value="global">Global (Todo)</option>
+                                <option value="day">Día Específico</option>
+                                <option value="week">Semana</option>
+                                <option value="month">Mes</option>
+                                <option value="range">Rango de Fechas</option>
+                            </select>
+                            <Icon name="calendar" className="absolute right-3 top-3.5 w-4 h-4 text-slate-400 pointer-events-none" />
+                        </div>
+                        
+                        {filter.mode === 'day' && <input type="date" value={filter.value} onChange={e => setFilter({...filter, value: e.target.value})} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold w-full" />}
+                        {filter.mode === 'week' && <input type="week" value={filter.value} onChange={e => setFilter({...filter, value: e.target.value})} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold w-full" />}
+                        {filter.mode === 'month' && <input type="month" value={filter.value} onChange={e => setFilter({...filter, value: e.target.value})} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold w-full" />}
+                        {filter.mode === 'range' && (
+                            <div className="flex items-center gap-2">
+                                <input type="date" value={filter.start} onChange={e => setFilter({...filter, start: e.target.value})} className="p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold w-full" />
+                                <span className="text-slate-400 font-bold">-</span>
+                                <input type="date" value={filter.end} onChange={e => setFilter({...filter, end: e.target.value})} className="p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold w-full" />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+
+            const handleSaveSale = () => {
+                if (cart.length === 0) return;
+                
+                const totals = cart.reduce((acc, item) => ({
+                    venta: acc.venta + (item.product.price * item.quantity),
+                    costo: acc.costo + (item.product.cost * item.quantity),
+                    renta: acc.renta + ((item.product.rent ?? getRentValue(item.product.price)) * item.quantity),
+                    ganancia: acc.ganancia + ((item.product.price - item.product.cost - (item.product.rent ?? getRentValue(item.product.price))) * item.quantity),
+                    items: acc.items + item.quantity
+                }), { venta: 0, costo: 0, renta: 0, ganancia: 0, items: 0 });
+
+                let savedSale = null;
+                const isoNow = new Date(saleDate);
+
+                // ACTUALIZAR EL INVENTARIO/STOCK Y GUARDAR
+                setProducts(prevProducts => {
+                    const newProducts = prevProducts.map(p => {
+                        let newStock = p.stock || 0;
+                        
+                        // Si estamos editando, primero revertimos el stock original de la venta
+                        if (editingSaleId) {
+                            const originalSale = sales.find(s => s.id === editingSaleId);
+                            const origItem = originalSale?.items.find(i => i.product.id === p.id);
+                            if (origItem) newStock += origItem.quantity;
+                        }
+
+                        // Luego restamos lo que esté actualmente en el carrito
+                        const cartItem = cart.find(i => i.product.id === p.id);
+                        if (cartItem) newStock -= cartItem.quantity;
+                        
+                        return { ...p, stock: newStock };
+                    });
+                    
+                    return newProducts;
+                });
+
+                if (editingSaleId) {
+                    const originalSale = sales.find(s => s.id === editingSaleId);
+                    const updatedSale = {
+                        date: isoNow.toLocaleString(),
+                        isoDate: isoNow.toISOString(),
+                        items: [...cart], paymentMethod, totalVenta: totals.venta, totalCosto: totals.costo, 
+                        totalRenta: totals.renta, totalGanancia: totals.ganancia, totalItems: totals.items
+                    };
+                    setSales(prev => prev.map(s => s.id === editingSaleId ? { ...s, ...updatedSale } : s));
+                    savedSale = { ...originalSale, ...updatedSale };
+                    setEditingSaleId(null);
+                } else {
+                    const dd = String(isoNow.getDate()).padStart(2, '0');
+                    const mm = String(isoNow.getMonth() + 1).padStart(2, '0');
+                    const yy = String(isoNow.getFullYear()).slice(-2);
+                    const prefix = `${dd}${mm}${yy}`;
+                    
+                    const todaysSalesCount = sales.filter(s => s.id.startsWith(prefix)).length;
+                    const nextNum = todaysSalesCount + 1;
+                    const saleId = `${prefix}${String(nextNum).padStart(3, '0')}`;
+
+                    const newSale = { 
+                        id: saleId, 
+                        date: isoNow.toLocaleString(), 
+                        isoDate: isoNow.toISOString(), 
+                        items: [...cart], paymentMethod, totalVenta: totals.venta, totalCosto: totals.costo, 
+                        totalRenta: totals.renta, totalGanancia: totals.ganancia, totalItems: totals.items 
+                    };
+                    setSales(prev => [newSale, ...prev]);
+                    savedSale = newSale;
+                }
+                
+                setCart([]);
+                setIsCreatingSale(false);
+                if (savedSale) setSelectedSaleReceipt(savedSale);
+            };
+
+            const filteredSalesList = useMemo(() => sales.filter(sale => {
+                const matchDate = matchesDateFilter(sale.isoDate, sale.date, salesDateFilter);
+                const matchCategory = salesListFilter.includes('todos') || sale.items.some(item => {
+                    const cats = Array.isArray(item.product.category) ? item.product.category : [item.product.category];
+                    return cats.some(c => salesListFilter.includes(c));
+                });
+                const matchPayment = salesPaymentFilter.includes('todos') || salesPaymentFilter.includes(sale.paymentMethod);
+                return matchDate && matchCategory && matchPayment;
+            }), [sales, salesDateFilter, salesListFilter, salesPaymentFilter]);
+
+            const groupedSalesArray = useMemo(() => {
+                const map = new Map();
+                filteredSalesList.forEach(sale => {
+                    const dateObj = sale.isoDate ? new Date(sale.isoDate) : parseDateFallback(sale.date);
+                    const dateStr = dateObj.toLocaleDateString();
+                    if (!map.has(dateStr)) map.set(dateStr, []);
+                    map.get(dateStr).push(sale);
+                });
+                return Array.from(map.entries()).sort((a,b) => parseDateFallback(b[0]) - parseDateFallback(a[0])).map(([date, salesList]) => ({ date, sales: salesList }));
+            }, [filteredSalesList]);
+
+            // Calcula los totales base (ventaBruta, costo, renta, etc.) para un filtro de pago dado.
+            // Se separó de calculateStats para poder recalcular una base distinta por cada
+            // estadística personalizada cuando ésta restringe su propio método de pago.
+            const calculateBaseStats = (dateFilt, payFilt, catFilt) => {
+                let s = { ventaBruta: 0, costoProduccion: 0, renta: 0, gananciaNeta: 0, items: 0, ventaSinRenta: 0, totalVentasNum: 0 };
+                sales.forEach(sale => {
+                    if (!matchesDateFilter(sale.isoDate, sale.date, dateFilt)) return;
+                    if (!payFilt.includes('todos') && !payFilt.includes(sale.paymentMethod)) return;
+                    
+                    let matchesCat = false;
+                    sale.items.forEach(item => {
+                        const itemCats = Array.isArray(item.product.category) ? item.product.category : [item.product.category];
+                        if (catFilt.includes('todos') || itemCats.some(c => catFilt.includes(c))) {
+                            matchesCat = true;
+                            const currentRent = item.product.rent ?? getRentValue(item.product.price);
+                            s.ventaBruta += item.product.price * item.quantity;
+                            s.costoProduccion += item.product.cost * item.quantity;
+                            s.renta += currentRent * item.quantity;
+                            s.gananciaNeta += (item.product.price - item.product.cost - currentRent) * item.quantity;
+                            s.items += item.quantity;
+                            s.ventaSinRenta += (item.product.price - currentRent) * item.quantity;
+                        }
+                    });
+                    if (matchesCat) s.totalVentasNum += 1;
+                });
+                return s;
+            };
+
+            // Calcula un mapa COMPLETO de valores (estadísticas base + todas las personalizadas ya resueltas)
+            // para un filtro de pago dado. A diferencia de calculateBaseStats, este sí incluye los
+            // valores de las demás estadísticas personalizadas, para que una estadística con método
+            // de pago propio pueda usar correctamente a otra estadística personalizada como fuente
+            // (antes esto se quedaba en $0 porque esa fuente no existía en la base recalculada).
+            const calculateFullStatsMap = (dateFilt, payFilt, catFilt) => {
+                const map = calculateBaseStats(dateFilt, payFilt, catFilt);
+                settings.customStats.forEach(stat => {
+                    const hasOwnPayFilter = Array.isArray(stat.paymentMethods) && stat.paymentMethods.length > 0;
+                    const baseForStat = hasOwnPayFilter ? calculateFullStatsMap(dateFilt, stat.paymentMethods, catFilt) : map;
+
+                    const base1 = baseForStat[stat.source] || 0;
+                    const base2 = baseForStat[stat.source2] || 0;
+                    let val = 0;
+                    if (stat.type === 'percentage') val = base1 * (parseFloat(stat.value) / 100);
+                    else if (stat.type === 'fixed') val = parseFloat(stat.value);
+                    else if (stat.type === 'sum') val = base1 + base2;
+                    else if (stat.type === 'subtract') val = base1 - base2;
+
+                    map[stat.id] = val || 0;
+                });
+                return map;
+            };
+
+            const calculateStats = (dateFilt, payFilt, catFilt) => {
+                const s = calculateBaseStats(dateFilt, payFilt, catFilt);
+                const resultsMap = { ...s };
+
+                const computedCustoms = settings.customStats.map(stat => {
+                    // Si la estadística tiene métodos de pago propios, se recalcula la base
+                    // usando SOLO esos métodos, sin importar el filtro de pago del reporte.
+                    const hasOwnPayFilter = Array.isArray(stat.paymentMethods) && stat.paymentMethods.length > 0;
+                    const baseForStat = hasOwnPayFilter ? calculateFullStatsMap(dateFilt, stat.paymentMethods, catFilt) : resultsMap;
+
+                    const base1 = baseForStat[stat.source] || 0;
+                    const base2 = baseForStat[stat.source2] || 0;
+                    let val = 0;
+                    if (stat.type === 'percentage') val = base1 * (parseFloat(stat.value) / 100);
+                    else if (stat.type === 'fixed') val = parseFloat(stat.value);
+                    else if (stat.type === 'sum') val = base1 + base2;
+                    else if (stat.type === 'subtract') val = base1 - base2;
+
+                    resultsMap[stat.id] = val; 
+                    return { ...stat, calculated: val || 0 };
+                });
+
+                return { ...s, computedCustoms };
+            };
+
+            const stats = useMemo(() => calculateStats(reportDateFilter, reportPaymentFilter, reportCategoryFilter), [sales, reportDateFilter, reportPaymentFilter, reportCategoryFilter, settings]);
+            
+            const soldProductsData = useMemo(() => {
+                const map = new Map();
+                sales.forEach(sale => {
+                    if (!matchesDateFilter(sale.isoDate, sale.date, reportDateFilter)) return;
+                    if (!reportPaymentFilter.includes('todos') && !reportPaymentFilter.includes(sale.paymentMethod)) return;
+
+                    sale.items.forEach(item => {
+                        const itemCats = Array.isArray(item.product.category) ? item.product.category : [item.product.category];
+                        if (reportCategoryFilter.includes('todos') || itemCats.some(c => reportCategoryFilter.includes(c))) {
+                            const pid = item.product.id;
+                            const currentRent = item.product.rent ?? getRentValue(item.product.price);
+                            
+                            if (!map.has(pid)) {
+                                map.set(pid, { id: pid, name: item.product.name, category: item.product.category, quantity: 0, revenue: 0, revenueNoRent: 0, cost: 0, rent: 0, profit: 0 });
+                            }
+                            const curr = map.get(pid);
+                            curr.quantity += item.quantity;
+                            curr.revenue += (item.product.price * item.quantity);
+                            curr.revenueNoRent += ((item.product.price - currentRent) * item.quantity);
+                            curr.cost += (item.product.cost * item.quantity);
+                            curr.rent += (currentRent * item.quantity);
+                            curr.profit += ((item.product.price - item.product.cost - currentRent) * item.quantity);
+                        }
+                    });
+                });
+                return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
+            }, [sales, reportDateFilter, reportPaymentFilter, reportCategoryFilter, settings]);
+
+            // PDF
+            const handleExportPDF = () => {
+                const element = document.getElementById('pdf-export-container');
+                const opt = {
+                    margin: 10, filename: `Reporte_${settings.companyName.replace(/\s+/g,'_')}.pdf`,
+                    image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+                };
+                element.style.display = 'block';
+                html2pdf().set(opt).from(element).save().then(() => { element.style.display = 'none'; });
+            };
+
+            const toggleHiddenStat = (statId) => {
+                setSettings(prev => ({
+                    ...prev,
+                    hiddenStats: prev.hiddenStats.includes(statId) 
+                        ? prev.hiddenStats.filter(id => id !== statId)
+                        : [...prev.hiddenStats, statId]
+                }));
+            };
+
+            // Oculta/muestra una estadística únicamente dentro de la sección de Reportes (no afecta Catálogo, Historial, Carrito ni Ventas)
+            const toggleReportHiddenStat = (statId) => {
+                setSettings(prev => ({
+                    ...prev,
+                    reportHiddenStats: (prev.reportHiddenStats || []).includes(statId)
+                        ? prev.reportHiddenStats.filter(id => id !== statId)
+                        : [...(prev.reportHiddenStats || []), statId]
+                }));
+            };
+
+            // Edición de estadísticas personalizadas (carga sus datos en el formulario de creación)
+            const startEditCustomStat = (cstat) => {
+                setEditingDefaultStatId(null);
+                setEditingStatId(cstat.id);
+                setNewStat({ name: cstat.name, type: cstat.type, source: cstat.source, source2: cstat.source2, value: cstat.value, paymentMethods: cstat.paymentMethods || [] });
+            };
+
+            const cancelEditCustomStat = () => {
+                setEditingStatId(null);
+                setNewStat({ name: '', type: 'percentage', source: 'ventaBruta', source2: 'ventaBruta', value: '', paymentMethods: [] });
+            };
+
+            const saveCustomStat = () => {
+                if (!isCustomStatValid) return;
+                if (editingStatId) {
+                    setSettings(prev => ({ ...prev, customStats: prev.customStats.map(c => c.id === editingStatId ? { ...newStat, id: editingStatId } : c) }));
+                } else {
+                    setSettings(prev => ({ ...prev, customStats: [...prev.customStats, { ...newStat, id: `custom_${Date.now()}` }] }));
+                }
+                cancelEditCustomStat();
+            };
+
+            // Renombrar una estadística automática (el cálculo no cambia, solo su nombre visible)
+            const startEditDefaultStatName = (stat) => {
+                cancelEditCustomStat();
+                setEditingDefaultStatId(stat.id);
+                setDefaultStatNameDraft(stat.name);
+            };
+
+            const saveDefaultStatName = () => {
+                if (!editingDefaultStatId) return;
+                const trimmed = defaultStatNameDraft.trim();
+                setSettings(prev => ({
+                    ...prev,
+                    statOverrides: { ...prev.statOverrides, [editingDefaultStatId]: { ...(prev.statOverrides?.[editingDefaultStatId] || {}), name: trimmed || undefined } }
+                }));
+                setEditingDefaultStatId(null);
+                setDefaultStatNameDraft('');
+            };
+
+            const StatsDashboard = ({ statsData, title }) => (
+                <div className="mb-6">
+                    {title && <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-3 px-2">{title}</h3>}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {activeDefaultStats.filter(s => !settings.hiddenStats.includes(s.id) && !(settings.reportHiddenStats || []).includes(s.id)).map(def => (
+                            <div key={def.id} className={def.id === 'ventaBruta' ? `bg-primary text-white p-6 rounded-[2rem] shadow-lg md:col-span-2 lg:col-span-1` : `bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100`}>
+                                <p className={`${def.id === 'ventaBruta' ? 'opacity-80 text-[10px]' : 'text-slate-400 text-[10px]'} font-black uppercase tracking-widest mb-1`}>{def.name}</p>
+                                <h3 className={`text-4xl font-black ${def.id !== 'ventaBruta' ? def.color : ''}`}>
+                                    {def.id.includes('Num') || def.id === 'items' ? statsData[def.id] : formatMoney(statsData[def.id])}
+                                </h3>
+                            </div>
+                        ))}
+
+                        {statsData.computedCustoms.filter(c => !settings.hiddenStats.includes(c.id) && !(settings.reportHiddenStats || []).includes(c.id)).map((custom, idx) => (
+                            <div key={`custom-${idx}`} className="bg-white p-6 rounded-[2rem] shadow-sm border border-primary/20 bg-primary/5">
+                                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-1 flex items-center gap-1"><Icon name="zap" className="w-3 h-3 text-primary" /> {custom.name}</p>
+                                <h3 className="text-3xl font-black text-slate-700">{formatMoney(custom.calculated)}</h3>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            const isDefaultLogo = !settings.logoUrl || settings.logoUrl === 'logo_blanco.png';
+            
+            // Validaciones para activar botones
+            const isCustomStatValid = newStat.name.trim() !== '' && (['sum', 'subtract'].includes(newStat.type) || String(newStat.value).trim() !== '');
+            const isCatValid = newCat.name.trim() !== '';
+            const isPayValid = newPay.name.trim() !== '';
+            const isProductValid = newProduct.name.trim() !== '' && String(newProduct.cost).trim() !== '' && String(newProduct.price).trim() !== '' && parseFloat(newProduct.price) > 0 && (Array.isArray(newProduct.category) && newProduct.category.length > 0) && String(newProduct.stock).trim() !== '' && parseInt(newProduct.stock) >= 0;
+
+            return (
+                <div className="min-h-screen pb-24">
+                    <header className="bg-primary text-white p-6 shadow-md rounded-b-[2.5rem] transition-colors duration-500">
+                        <div className="max-w-4xl mx-auto flex items-center justify-between">
+                            <div>
+                                <h1 className="text-3xl font-extrabold tracking-tight">{settings.companyName}</h1>
+                                <p className="bg-white/20 inline-block px-3 py-1 rounded-full text-sm mt-2 font-medium">{settings.businessType}</p>
+                            </div>
+                            <div className="w-20 h-20 md:w-24 md:h-24 flex items-center justify-center">
+                                <img src={settings.logoUrl || "logo_blanco.png"} alt="Logo" className={`w-full h-full object-contain ${isDefaultLogo ? 'header-logo' : ''}`} onError={(e) => { e.target.onerror = null; e.target.src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2L2 22h20L12 2z'/%3E%3C/svg%3E" }} />
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* PLANTILLA EXPORTACIÓN PDF */}
+                    <div id="pdf-export-container" style={{ display: 'none', padding: '20px', fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+                        <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
+                                <img src={settings.logoUrl || "logo_blanco.png"} alt="Logo" style={{ width: '60px', height: '60px', objectFit: 'contain', filter: isDefaultLogo ? 'brightness(0) invert(1)' : 'none', backgroundColor: isDefaultLogo ? settings.primaryColor : 'transparent', borderRadius: isDefaultLogo ? '50%' : '0', padding: isDefaultLogo ? '10px' : '0' }} onError={(e) => e.target.style.display='none'} />
+                                <h1 style={{ color: settings.primaryColor, margin: '0', fontSize: '24px', fontWeight: '800' }}>{settings.companyName} - Reporte Integral</h1>
+                            </div>
+                            <p style={{ color: '#94a3b8', fontSize: '10px', marginTop: '5px' }}>
+                                Filtro: {getFilterDateLabel(reportDateFilter)} | Generado: {new Date().toLocaleString()}
+                            </p>
+                        </div>
+                        {/* Métricas de Reportes */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '30px' }}>
+                            {activeDefaultStats.filter(s => !settings.hiddenStats.includes(s.id) && !(settings.reportHiddenStats || []).includes(s.id)).map(def => (
+                                <div className="pdf-card" key={def.id}>
+                                    <p style={{ fontSize: '8px', color: '#64748b', textTransform: 'uppercase' }}>{def.name}</p>
+                                    <p style={{ fontSize: '16px', fontWeight: '800' }}>{def.id.includes('Num') || def.id === 'items' ? stats[def.id] : formatMoney(stats[def.id])}</p>
+                                </div>
+                            ))}
+                            {stats.computedCustoms.filter(c => !settings.hiddenStats.includes(c.id) && !(settings.reportHiddenStats || []).includes(c.id)).map((custom, idx) => (
+                                <div className="pdf-card" key={`pdf-custom-${idx}`}>
+                                    <p style={{ fontSize: '8px', color: '#64748b', textTransform: 'uppercase' }}>{custom.name}</p>
+                                    <p style={{ fontSize: '16px', fontWeight: '800' }}>{formatMoney(custom.calculated)}</p>
+                                </div>
+                            ))}
+                        </div>
+                        
+                        {/* Desglose */}
+                        <h3 style={{ fontSize: '14px', fontWeight: '800', marginTop: '20px', marginBottom: '10px', color: '#1e293b', borderBottom: '2px solid #f1f5f9', paddingBottom: '5px' }}>Desglose de Productos</h3>
+                        <table className="pdf-table">
+                            <thead>
+                                <tr>
+                                    <th>Cant.</th>
+                                    <th>Producto / Categoría</th>
+                                    {tableDisplayStats.map(s => <th key={s.id}>{s.name}</th>)}
+                                    {settings.customStats.filter(s => !settings.hiddenStats.includes(s.id)).map(s => <th key={s.id}>{s.name}</th>)}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {soldProductsData.map(p => {
+                                    const cats = Array.isArray(p.category) ? p.category : [p.category];
+                                    return (
+                                    <tr key={p.id}>
+                                        <td style={{ fontWeight: '800' }}>{p.quantity}</td>
+                                        <td>
+                                            <div style={{ fontWeight: '700' }}>{p.name}</div>
+                                            <div style={{ fontSize: '8px', color: '#94a3b8', textTransform: 'uppercase' }}>{cats.map(cId => getCatSettings(cId).name).join(', ')}</div>
+                                        </td>
+                                        {tableDisplayStats.map(stat => (
+                                            <td key={stat.id} style={{color: stat.id==='gananciaNeta' ? '#16a34a' : stat.id==='costoProduccion' ? '#ef4444' : stat.id==='renta' ? '#ea580c' : stat.id==='ventaSinRenta' ? '#4f46e5' : 'inherit', fontWeight: '700'}}>
+                                                {formatMoney(getDynamicStatValue(p, stat.id, false, null, true))}
+                                            </td>
+                                        ))}
+                                        {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id)).map(cstat => (
+                                            <td key={cstat.id} style={{fontWeight: '700'}}>
+                                                {formatMoney(getDynamicStatValue(p, null, true, cstat, true))}
+                                            </td>
+                                        ))}
+                                    </tr>
+                                )})}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <main className="max-w-4xl mx-auto p-4 mt-6">
+                        
+                        {/* PERFIL */}
+                        {activeTab === 'perfil' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                                    <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2 mb-4">
+                                        <Icon name="briefcase" className="text-primary" /> Mis Negocios
+                                    </h2>
+                                    <p className="text-[10px] text-slate-400 mb-4 italic">Cada negocio guarda su propio catálogo, ventas y ajustes por separado. Toca uno para activarlo.</p>
+                                    <div className="flex flex-wrap gap-2 mb-4">
+                                        {profiles.map(p => (
+                                            <div key={p.id} className={`flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-xl text-xs font-bold shadow-sm transition-all ${p.id === activeProfileId ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                                <button onClick={() => switchProfile(p.id)} className="flex items-center gap-1.5">
+                                                    {p.id === activeProfileId && <Icon name="check" className="w-3.5 h-3.5" />}
+                                                    {p.name}
+                                                </button>
+                                                <button onClick={() => { setEditingProfile(p); setNewProfileName(p.name); }} className={`p-1 rounded-md ${p.id === activeProfileId ? 'hover:bg-white/20' : 'hover:bg-slate-200'}`}><Icon name="pencil" className="w-3 h-3" /></button>
+                                                {profiles.length > 1 && (
+                                                    <button onClick={() => setProfileToDelete(p.id)} className={`p-1 rounded-md ${p.id === activeProfileId ? 'hover:bg-white/20' : 'hover:bg-slate-200'}`}><Icon name="x" className="w-3 h-3" /></button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 items-center">
+                                        <input
+                                            type="text"
+                                            placeholder={editingProfile ? "Renombrar negocio" : "Nombre del nuevo negocio"}
+                                            value={newProfileName}
+                                            onChange={e => setNewProfileName(e.target.value)}
+                                            className="flex-1 min-w-[180px] p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                        <button
+                                            disabled={!newProfileName.trim()}
+                                            onClick={() => {
+                                                const name = newProfileName.trim();
+                                                if (!name) return;
+                                                if (editingProfile) {
+                                                    setProfiles(prev => prev.map(p => p.id === editingProfile.id ? {...p, name} : p));
+                                                    setEditingProfile(null);
+                                                } else {
+                                                    createProfile(name);
+                                                }
+                                                setNewProfileName('');
+                                            }}
+                                            className={`px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest transition-all ${newProfileName.trim() ? 'bg-primary text-white shadow-md shadow-primary-glow' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                        >
+                                            {editingProfile ? 'Guardar' : 'Crear'}
+                                        </button>
+                                        {editingProfile && (
+                                            <button onClick={() => { setEditingProfile(null); setNewProfileName(''); }} className="bg-slate-200 text-slate-600 px-3 py-2.5 rounded-xl font-bold"><Icon name="x" className="w-4 h-4" /></button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                                    <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2 mb-6">
+                                        <Icon name="user" className="text-primary" /> Perfil & Ajustes
+                                    </h2>
+                                    
+                                    <div className="space-y-6">
+                                        <div className="border-b border-slate-100 pb-6">
+                                            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">Comportamiento General</h3>
+                                            <label className="flex items-center gap-4 cursor-pointer p-3 hover:bg-slate-50 rounded-2xl transition-colors border border-transparent hover:border-slate-100">
+                                                <div className={`relative w-12 h-6 rounded-full transition-colors ${settings.allowMultiFilter ? 'bg-primary' : 'bg-slate-200'}`}>
+                                                    <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.allowMultiFilter ? 'translate-x-6' : ''}`}></div>
+                                                </div>
+                                                <div className="flex-1">
+                                                    <span className="text-sm font-bold text-slate-700 block">Filtros Múltiples</span>
+                                                    <span className="text-xs text-slate-400 leading-tight block mt-0.5">Permite seleccionar varias categorías o métodos de pago a la vez.</span>
+                                                </div>
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="hidden" 
+                                                    checked={!!settings.allowMultiFilter}
+                                                    onChange={(e) => {
+                                                        setSettings({...settings, allowMultiFilter: e.target.checked});
+                                                        setProductsListFilter(['todos']); setSalesListFilter(['todos']); setSalesPaymentFilter(['todos']); setReportCategoryFilter(['todos']); setReportPaymentFilter(['todos']);
+                                                    }} 
+                                                />
+                                            </label>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-3">Información General</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Nombre de Empresa</label>
+                                                    <input type="text" value={settings.companyName} onChange={e => setSettings({...settings, companyName: e.target.value})} className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:ring-2 focus:ring-primary font-bold" />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Subtítulo / Tipo</label>
+                                                    <input type="text" value={settings.businessType} onChange={e => setSettings({...settings, businessType: e.target.value})} className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:ring-2 focus:ring-primary font-bold" />
+                                                </div>
+                                                <div className="md:col-span-2">
+                                                    <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Logo de la Empresa</label>
+                                                    <div className="flex flex-col sm:flex-row gap-2">
+                                                        <input type="text" value={settings.logoUrl} onChange={e => setSettings({...settings, logoUrl: e.target.value})} className="flex-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:ring-2 focus:ring-primary font-bold" placeholder="URL de la imagen (https://...)" />
+                                                        <div className="relative overflow-hidden bg-primary text-white p-3 rounded-xl font-bold text-center cursor-pointer hover:opacity-90 transition-opacity">
+                                                            <span className="flex items-center justify-center gap-2"><Icon name="upload" className="w-4 h-4" /> Subir Archivo</span>
+                                                            <input type="file" accept="image/*" onChange={handleLogoUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Color Principal</label>
+                                                    <div className="flex gap-2">
+                                                        <input type="color" value={settings.primaryColor} onChange={e => setSettings({...settings, primaryColor: e.target.value})} className="w-12 h-12 rounded-xl cursor-pointer" />
+                                                        <input type="text" value={settings.primaryColor} onChange={e => setSettings({...settings, primaryColor: e.target.value})} className="flex-1 p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" />
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Fondo de Renta (%) <span className="text-[9px] font-normal lowercase">(Pon 0 para ocultar)</span></label>
+                                                    <input type="number" min="0" max="100" value={settings.rentPercentage ?? 10} onChange={e => setSettings({...settings, rentPercentage: parseFloat(e.target.value) || 0})} className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none focus:ring-2 focus:ring-primary font-bold" placeholder="Ej. 10 para 10%" />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-slate-100 pt-6">
+                                            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-3">Categorías de Producto</h3>
+                                            <p className="text-[10px] text-slate-400 mb-4 italic">Haz clic en una categoría para editarla.</p>
+                                            <div className="flex flex-wrap gap-2 mb-4">
+                                                {settings.categories.map(cat => (
+                                                    <div key={cat.id} onClick={() => setNewCat(cat)} style={{backgroundColor: cat.color, color: cat.textColor}} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm cursor-pointer hover:scale-105 transition-transform">
+                                                        {cat.name}
+                                                        <button onClick={(e) => { e.stopPropagation(); setSettings({...settings, categories: settings.categories.filter(c => c.id !== cat.id)}); }} className="opacity-50 hover:opacity-100"><Icon name="x" className="w-3 h-3" /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 items-end">
+                                                <div className="flex-1 min-w-[150px]">
+                                                    <input type="text" placeholder="Nombre de categoría" value={newCat.name} onChange={e => setNewCat({...newCat, name: e.target.value, id: newCat.id || e.target.value.toLowerCase().replace(/\s+/g,'-')})} className="w-full p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold outline-none focus:ring-2 focus:ring-primary" />
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-slate-400 block mb-1">Fondo</label>
+                                                        <div className="flex items-center gap-1">
+                                                            <input type="color" value={newCat.color} onChange={e => setNewCat({...newCat, color: e.target.value})} className="w-8 h-8 rounded cursor-pointer" />
+                                                            <input type="text" value={newCat.color} onChange={e => setNewCat({...newCat, color: e.target.value})} className="w-16 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold outline-none uppercase" />
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-slate-400 block mb-1">Texto</label>
+                                                        <div className="flex items-center gap-1">
+                                                            <input type="color" value={newCat.textColor} onChange={e => setNewCat({...newCat, textColor: e.target.value})} className="w-8 h-8 rounded cursor-pointer" />
+                                                            <input type="text" value={newCat.textColor} onChange={e => setNewCat({...newCat, textColor: e.target.value})} className="w-16 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold outline-none uppercase" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button 
+                                                    disabled={!isCatValid}
+                                                    onClick={() => { 
+                                                    if(isCatValid) { 
+                                                        const exists = settings.categories.find(c => c.id === newCat.id);
+                                                        if (exists) {
+                                                            setSettings({...settings, categories: settings.categories.map(c => c.id === newCat.id ? newCat : c)});
+                                                        } else {
+                                                            setSettings({...settings, categories: [...settings.categories, newCat]}); 
+                                                        }
+                                                        setNewCat({name:'', id:'', color:'#f472b6', textColor:'#ffffff'}); 
+                                                    } 
+                                                }} className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all ${isCatValid ? 'bg-primary text-white shadow-md shadow-primary-glow' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                                                    {settings.categories.find(c => c.id === newCat.id) ? 'Actualizar' : 'Añadir'}
+                                                </button>
+                                                {settings.categories.find(c => c.id === newCat.id) && (
+                                                    <button onClick={() => setNewCat({name:'', id:'', color:'#f472b6', textColor:'#ffffff'})} className="bg-slate-200 text-slate-600 px-3 py-2.5 rounded-xl font-bold"><Icon name="x" className="w-4 h-4" /></button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-slate-100 pt-6">
+                                            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-3">Métodos de Pago</h3>
+                                            <p className="text-[10px] text-slate-400 mb-4 italic">Haz clic en un método para editarlo.</p>
+                                            <div className="flex flex-wrap gap-2 mb-4">
+                                                {settings.payments.map(pay => (
+                                                    <div key={pay.id} onClick={() => setNewPay(pay)} style={{backgroundColor: pay.color, color: pay.textColor}} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm cursor-pointer hover:scale-105 transition-transform">
+                                                        {pay.name}
+                                                        <button onClick={(e) => { e.stopPropagation(); setSettings({...settings, payments: settings.payments.filter(p => p.id !== pay.id)}); }} className="opacity-50 hover:opacity-100"><Icon name="x" className="w-3 h-3" /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 items-end">
+                                                <div className="flex-1 min-w-[150px]">
+                                                    <input type="text" placeholder="Nombre del método" value={newPay.name} onChange={e => setNewPay({...newPay, name: e.target.value, id: newPay.id || e.target.value.toLowerCase().replace(/\s+/g,'-')})} className="w-full p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold outline-none focus:ring-2 focus:ring-primary" />
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-slate-400 block mb-1">Fondo</label>
+                                                        <div className="flex items-center gap-1">
+                                                            <input type="color" value={newPay.color} onChange={e => setNewPay({...newPay, color: e.target.value})} className="w-8 h-8 rounded cursor-pointer" />
+                                                            <input type="text" value={newPay.color} onChange={e => setNewPay({...newPay, color: e.target.value})} className="w-16 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold outline-none uppercase" />
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-slate-400 block mb-1">Texto</label>
+                                                        <div className="flex items-center gap-1">
+                                                            <input type="color" value={newPay.textColor} onChange={e => setNewPay({...newPay, textColor: e.target.value})} className="w-8 h-8 rounded cursor-pointer" />
+                                                            <input type="text" value={newPay.textColor} onChange={e => setNewPay({...newPay, textColor: e.target.value})} className="w-16 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold outline-none uppercase" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button 
+                                                    disabled={!isPayValid}
+                                                    onClick={() => { 
+                                                    if(isPayValid) { 
+                                                        const exists = settings.payments.find(p => p.id === newPay.id);
+                                                        if (exists) {
+                                                            setSettings({...settings, payments: settings.payments.map(p => p.id === newPay.id ? newPay : p)});
+                                                        } else {
+                                                            setSettings({...settings, payments: [...settings.payments, newPay]}); 
+                                                        }
+                                                        setNewPay({name:'', id:'', color:'#eab308', textColor:'#ffffff'}); 
+                                                    } 
+                                                }} className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all ${isPayValid ? 'bg-primary text-white shadow-md shadow-primary-glow' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                                                    {settings.payments.find(p => p.id === newPay.id) ? 'Actualizar' : 'Añadir'}
+                                                </button>
+                                                {settings.payments.find(p => p.id === newPay.id) && (
+                                                    <button onClick={() => setNewPay({name:'', id:'', color:'#eab308', textColor:'#ffffff'})} className="bg-slate-200 text-slate-600 px-3 py-2.5 rounded-xl font-bold"><Icon name="x" className="w-4 h-4" /></button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-slate-100 pt-6">
+                                            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-3">Estadísticas Activas</h3>
+                                            <p className="text-[10px] text-slate-400 mb-1 italic">Incluye tanto las automáticas de la app como las personalizadas. Puedes editarlas (incluidas las automáticas), ocultarlas por completo, o solo ocultarlas de Reportes.</p>
+                                            <div className="flex flex-wrap gap-3 mb-4 text-[9px] font-bold text-slate-400 uppercase">
+                                                <span className="flex items-center gap-1"><Icon name="eye" className="w-3 h-3" /> Ver/ocultar en todo</span>
+                                                <span className="flex items-center gap-1"><Icon name="pie-chart" className="w-3 h-3" /> Ver/ocultar en Reportes</span>
+                                                <span className="flex items-center gap-1"><Icon name="pencil" className="w-3 h-3" /> Editar</span>
+                                            </div>
+
+                                            <div className="space-y-2 mb-6">
+                                                {[...activeDefaultStats, ...settings.customStats].map(stat => {
+                                                    const isDefaultStat = activeDefaultStats.some(d => d.id === stat.id);
+                                                    const isHiddenGlobal = settings.hiddenStats.includes(stat.id);
+                                                    const isHiddenReport = (settings.reportHiddenStats || []).includes(stat.id);
+                                                    const isRenamingThis = editingDefaultStatId === stat.id;
+                                                    const isEditingThisCustom = editingStatId === stat.id;
+                                                    return (
+                                                        <div key={stat.id} className={`flex items-center gap-1.5 rounded-xl p-2 border ${isEditingThisCustom ? 'bg-primary/5 border-primary/30' : 'bg-slate-50 border-slate-200'}`}>
+                                                            {isRenamingThis ? (
+                                                                <input
+                                                                    type="text"
+                                                                    autoFocus
+                                                                    value={defaultStatNameDraft}
+                                                                    onChange={e => setDefaultStatNameDraft(e.target.value)}
+                                                                    className="flex-1 min-w-0 p-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+                                                                />
+                                                            ) : (
+                                                                <span className="flex-1 min-w-0 text-xs font-bold text-slate-700 truncate">
+                                                                    {!isDefaultStat && <Icon name="zap" className="w-3 h-3 inline mr-1 text-primary" />}
+                                                                    {stat.name}
+                                                                    {!isDefaultStat && (
+                                                                        <span className="text-slate-400 font-normal normal-case">
+                                                                            {stat.type === 'percentage' ? ` (${stat.value}% de ${availableSources.find(s=>s.id===stat.source)?.name})` : ''}
+                                                                            {stat.type === 'fixed' ? ` (Fijo: $${stat.value})` : ''}
+                                                                            {stat.type === 'sum' ? ` (Suma)` : ''}
+                                                                            {stat.type === 'subtract' ? ` (Resta)` : ''}
+                                                                            {Array.isArray(stat.paymentMethods) && stat.paymentMethods.length > 0 ? ` · Solo: ${settings.payments.filter(p => stat.paymentMethods.includes(p.id)).map(p => p.name).join(', ')}` : ''}
+                                                                        </span>
+                                                                    )}
+                                                                </span>
+                                                            )}
+
+                                                            {isRenamingThis ? (
+                                                                <>
+                                                                    <button onClick={saveDefaultStatName} className="p-1.5 rounded-lg bg-primary text-white shrink-0"><Icon name="check" className="w-3.5 h-3.5" /></button>
+                                                                    <button onClick={() => { setEditingDefaultStatId(null); setDefaultStatNameDraft(''); }} className="p-1.5 rounded-lg bg-slate-200 text-slate-500 shrink-0"><Icon name="x" className="w-3.5 h-3.5" /></button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <button onClick={() => toggleHiddenStat(stat.id)} title="Mostrar/ocultar en toda la app" className={`p-1.5 rounded-lg shrink-0 ${isHiddenGlobal ? 'bg-slate-200 text-slate-400' : 'bg-primary/10 text-primary'}`}>
+                                                                        <Icon name={isHiddenGlobal ? "eye-off" : "eye"} className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button onClick={() => toggleReportHiddenStat(stat.id)} title="Mostrar/ocultar en Reportes" className={`p-1.5 rounded-lg shrink-0 ${isHiddenReport ? 'bg-slate-200 text-slate-400' : 'bg-indigo-100 text-indigo-500'}`}>
+                                                                        <Icon name="pie-chart" className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button onClick={() => isDefaultStat ? startEditDefaultStatName(stat) : startEditCustomStat(stat)} className={`p-1.5 rounded-lg shrink-0 ${isEditingThisCustom ? 'bg-primary text-white' : 'bg-slate-100 text-slate-400 hover:text-primary'}`}>
+                                                                        <Icon name="pencil" className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    {!isDefaultStat && (
+                                                                        <button onClick={() => { if (editingStatId === stat.id) cancelEditCustomStat(); setSettings({...settings, customStats: settings.customStats.filter(c => c.id !== stat.id)}); }} className="p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 shrink-0"><Icon name="trash" className="w-3.5 h-3.5" /></button>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            
+                                            <h4 className="text-xs font-bold text-slate-600 mb-2">{editingStatId ? 'Editar Estadística Personalizada' : 'Crear Estadística Personalizada'}</h4>
+                                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                                                <input type="text" placeholder="Nombre (Ej. Impuestos 16%)" value={newStat.name} onChange={e => setNewStat({...newStat, name: e.target.value})} className="w-full p-2.5 rounded-xl bg-white border border-slate-200 text-sm font-bold outline-none focus:ring-2 focus:ring-primary" />
+                                                
+                                                <div className="flex flex-col gap-2">
+                                                    <div className="flex gap-2">
+                                                        <select value={newStat.type} onChange={e => setNewStat({...newStat, type: e.target.value})} className="w-1/3 p-2.5 rounded-xl bg-white border border-slate-200 text-xs font-bold outline-none">
+                                                            <option value="percentage">% Porcentaje</option>
+                                                            <option value="fixed">Fijo ($)</option>
+                                                            <option value="sum">Suma (+)</option>
+                                                            <option value="subtract">Resta (-)</option>
+                                                        </select>
+                                                        {['percentage', 'fixed'].includes(newStat.type) && (
+                                                            <input type="number" placeholder="Valor numérico" value={newStat.value} onChange={e => setNewStat({...newStat, value: e.target.value})} className="w-2/3 p-2.5 rounded-xl bg-white border border-slate-200 text-sm font-bold outline-none" />
+                                                        )}
+                                                    </div>
+
+                                                    {['percentage', 'fixed'].includes(newStat.type) ? (
+                                                        <div className="flex gap-2 items-center">
+                                                            <span className="text-xs font-bold text-slate-400">De:</span>
+                                                            <select value={newStat.source} onChange={e => setNewStat({...newStat, source: e.target.value})} className="flex-1 p-2.5 rounded-xl bg-white border border-slate-200 text-xs font-bold outline-none">
+                                                                {availableSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                            </select>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex gap-2 items-center">
+                                                            <select value={newStat.source} onChange={e => setNewStat({...newStat, source: e.target.value})} className="flex-1 p-2.5 rounded-xl bg-white border border-slate-200 text-xs font-bold outline-none">
+                                                                {availableSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                            </select>
+                                                            <span className="text-xs font-bold text-slate-400">{newStat.type === 'sum' ? '+' : '-'}</span>
+                                                            <select value={newStat.source2} onChange={e => setNewStat({...newStat, source2: e.target.value})} className="flex-1 p-2.5 rounded-xl bg-white border border-slate-200 text-xs font-bold outline-none">
+                                                                {availableSources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                            </select>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="border-t border-slate-200 pt-3">
+                                                    <span className="text-xs font-bold text-slate-400 block mb-2">Aplicar solo a método(s) de pago:</span>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        <button
+                                                            onClick={() => setNewStat({...newStat, paymentMethods: []})}
+                                                            style={(!newStat.paymentMethods || newStat.paymentMethods.length === 0) ? {backgroundColor: settings.primaryColor, color: '#fff'} : {}}
+                                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all shadow-sm ${(!newStat.paymentMethods || newStat.paymentMethods.length === 0) ? '' : 'bg-white text-slate-400 hover:bg-slate-200'}`}
+                                                        >
+                                                            Todos
+                                                        </button>
+                                                        {settings.payments.map(pay => {
+                                                            const isSel = (newStat.paymentMethods || []).includes(pay.id);
+                                                            return (
+                                                                <button
+                                                                    key={pay.id}
+                                                                    onClick={() => {
+                                                                        const curr = newStat.paymentMethods || [];
+                                                                        const next = curr.includes(pay.id) ? curr.filter(id => id !== pay.id) : [...curr, pay.id];
+                                                                        setNewStat({...newStat, paymentMethods: next});
+                                                                    }}
+                                                                    style={isSel ? {backgroundColor: pay.color, color: pay.textColor} : {}}
+                                                                    className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all shadow-sm ${isSel ? '' : 'bg-white text-slate-400 hover:bg-slate-200'}`}
+                                                                >
+                                                                    {pay.name}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="flex gap-2 mt-2">
+                                                    <button 
+                                                        disabled={!isCustomStatValid}
+                                                        onClick={saveCustomStat}
+                                                        className={`flex-1 transition-all p-2.5 rounded-xl font-bold text-xs uppercase tracking-widest ${isCustomStatValid ? 'bg-primary text-white shadow-lg shadow-primary-glow' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                                                        {editingStatId ? 'Actualizar Estadística' : 'Añadir Estadística'}
+                                                    </button>
+                                                    {editingStatId && (
+                                                        <button onClick={cancelEditCustomStat} className="px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest bg-slate-200 text-slate-500">
+                                                            Cancelar
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* PRODUCTOS */}
+                        {activeTab === 'productos' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2">
+                                            <Icon name="package" className="text-primary" /> Catálogo
+                                        </h2>
+                                        <button 
+                                            onClick={() => { setIsAddingProduct(!isAddingProduct); setNewProduct({ name: '', category: settings.categories[0] ? [settings.categories[0].id] : [], cost: '', price: '', stock: '' }); setEditingProductId(null); }} 
+                                            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-bold transition-all shadow-md ${isAddingProduct ? 'bg-slate-100 text-slate-500' : 'bg-primary text-white shadow-primary-glow'}`}
+                                        >
+                                            {isAddingProduct ? <span className="flex items-center gap-2"><Icon name="x" className="w-4 h-4" /> Cerrar</span> : <span className="flex items-center gap-2"><Icon name="plus" className="w-4 h-4" /> Agregar</span>}
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="flex flex-wrap items-center gap-2 justify-between">
+                                        <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl w-fit max-w-full">
+                                            <FilterButton id="todos" current={productsListFilter} label="Todos" type="cat" onClick={() => toggleFilter(productsListFilter, setProductsListFilter, 'todos')} />
+                                            {settings.categories.map(cat => (
+                                                <FilterButton key={cat.id} id={cat.id} current={productsListFilter} label={cat.name} type="cat" onClick={() => toggleFilter(productsListFilter, setProductsListFilter, cat.id)} />
+                                            ))}
+                                        </div>
+                                        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+                                            <span className="text-[9px] font-black uppercase text-slate-400 pl-2 pr-1">Stock:</span>
+                                            <button
+                                                onClick={() => setProductsStockSort(productsStockSort === 'asc' ? null : 'asc')}
+                                                title="Ordenar de menor a mayor stock"
+                                                className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 text-[10px] font-black uppercase ${productsStockSort === 'asc' ? 'bg-primary text-white shadow-sm' : 'text-slate-400 hover:bg-slate-200'}`}
+                                            >
+                                                <Icon name="arrow-up" className="w-3 h-3" /> Menor
+                                            </button>
+                                            <button
+                                                onClick={() => setProductsStockSort(productsStockSort === 'desc' ? null : 'desc')}
+                                                title="Ordenar de mayor a menor stock"
+                                                className={`px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1 text-[10px] font-black uppercase ${productsStockSort === 'desc' ? 'bg-primary text-white shadow-sm' : 'text-slate-400 hover:bg-slate-200'}`}
+                                            >
+                                                <Icon name="arrow-down" className="w-3 h-3" /> Mayor
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {isAddingProduct && (
+                                    <div className="bg-white p-6 rounded-[2rem] shadow-md border border-primary/30">
+                                        <h3 className="text-sm font-bold text-primary uppercase mb-4">{editingProductId ? 'Editar Producto' : 'Nuevo Producto'}</h3>
+                                        <form onSubmit={(e) => {
+                                            e.preventDefault();
+                                            if (!newProduct.name.trim()) return;
+                                            const cost = parseFloat(newProduct.cost) || 0;
+                                            const price = parseFloat(newProduct.price) || 0;
+                                            const stock = parseInt(newProduct.stock) || 0;
+                                            if (price <= 0) return;
+                                            const rent = getRentValue(price);
+                                            const profit = price - cost - rent;
+                                            if (editingProductId) {
+                                                setProducts(prev => prev.map(p => p.id === editingProductId ? { ...p, name: newProduct.name.trim(), category: newProduct.category, cost, price, rent, profit, stock } : p));
+                                                setEditingProductId(null);
+                                            } else {
+                                                setProducts(prev => [{ id: Date.now().toString(), name: newProduct.name.trim(), category: newProduct.category || (settings.categories[0] ? [settings.categories[0].id] : []), cost, price, rent, profit, stock }, ...prev]);
+                                            }
+                                            setNewProduct({ name: '', category: settings.categories[0] ? [settings.categories[0].id] : [], cost: '', price: '', stock: '' });
+                                            setIsAddingProduct(false);
+                                        }} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="md:col-span-2">
+                                                <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Nombre</label>
+                                                <input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full p-3 rounded-2xl bg-slate-50 ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-primary" placeholder="Ej. Tulipán Azul" />
+                                            </div>
+                                            <div className="md:col-span-2">
+                                                <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Categorías (Puedes seleccionar varias)</label>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {settings.categories.map(c => {
+                                                        const isSelected = Array.isArray(newProduct.category) && newProduct.category.includes(c.id);
+                                                        return (
+                                                            <button 
+                                                                key={c.id} type="button"
+                                                                onClick={() => setNewProduct(prev => {
+                                                                    const catArray = Array.isArray(prev.category) ? prev.category : [];
+                                                                    return {
+                                                                        ...prev, 
+                                                                        category: isSelected ? catArray.filter(id => id !== c.id) : [...catArray, c.id]
+                                                                    }
+                                                                })}
+                                                                style={{ backgroundColor: isSelected ? c.color : 'transparent', color: isSelected ? c.textColor : '#94a3b8', border: `1px solid ${isSelected ? c.color : '#e2e8f0'}` }}
+                                                                className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                                                            >
+                                                                {c.name}
+                                                            </button>
+                                                        )
+                                                    })}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Costo Material</label>
+                                                <input type="number" step="0.01" required value={newProduct.cost} onChange={e => setNewProduct({...newProduct, cost: e.target.value})} className="w-full p-3 rounded-2xl bg-slate-50 ring-1 ring-slate-200 outline-none" placeholder="0.00" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Precio de Venta</label>
+                                                <input type="number" step="0.01" required value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full p-3 rounded-2xl bg-slate-50 ring-1 ring-slate-200 outline-none" placeholder="0.00" />
+                                            </div>
+                                            <div className="md:col-span-2">
+                                                <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Cantidad en Stock Inicial / Actual</label>
+                                                <input type="number" min="0" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} className="w-full p-3 rounded-2xl bg-slate-50 ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-primary" placeholder="Ej. 10" />
+                                            </div>
+                                            <button 
+                                                type="submit" 
+                                                disabled={!isProductValid}
+                                                className={`md:col-span-2 py-4 rounded-2xl font-bold mt-2 transition-transform active:scale-95 ${isProductValid ? 'bg-primary text-white shadow-lg shadow-primary-glow' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                                                {editingProductId ? 'Actualizar Producto' : 'Guardar en Catálogo'}
+                                            </button>
+                                        </form>
+                                    </div>
+                                )}
+
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    {products
+                                        .filter(p => productsListFilter.includes('todos') || (Array.isArray(p.category) ? p.category : [p.category]).some(c => productsListFilter.includes(c)))
+                                        .slice()
+                                        .sort((a, b) => {
+                                            if (productsStockSort === 'asc') return (a.stock || 0) - (b.stock || 0);
+                                            if (productsStockSort === 'desc') return (b.stock || 0) - (a.stock || 0);
+                                            return 0;
+                                        })
+                                        .map(p => {
+                                        const cats = Array.isArray(p.category) ? p.category : [p.category];
+                                        const mockedProductSale = { revenue: p.price, cost: p.cost, rent: getRentValue(p.price), profit: p.price - p.cost - getRentValue(p.price), quantity: 1, revenueNoRent: p.price - getRentValue(p.price) };
+
+                                        return (
+                                        <div key={p.id} className="bg-white p-5 rounded-[1.5rem] shadow-sm border border-slate-100 group relative overflow-hidden animate-fade-in">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div>
+                                                    <h4 className="font-bold text-lg">{p.name}</h4>
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {cats.map(cId => {
+                                                            const cat = getCatSettings(cId);
+                                                            return <span key={cId} style={{backgroundColor: cat.color, color: cat.textColor}} className="text-[8px] uppercase font-black w-fit px-1.5 py-0.5 rounded opacity-90">{cat.name}</span>
+                                                        })}
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col items-end">
+                                                    <span className="font-black text-xl text-primary">{formatMoney(p.price)}</span>
+                                                    <span className={`text-[10px] font-black uppercase mt-1 px-2 py-0.5 rounded ${p.stock > 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                                        Stock: {p.stock || 0}
+                                                    </span>
+                                                    <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button onClick={() => { setEditingProductId(p.id); setNewProduct({ name: p.name, category: Array.isArray(p.category) ? p.category : [p.category], cost: p.cost.toString(), price: p.price.toString(), stock: p.stock?.toString() || '0' }); setIsAddingProduct(true); }} className="p-2 bg-slate-100 text-slate-500 rounded-xl hover:bg-primary hover:text-white transition-all"><Icon name="edit-2" className="w-4 h-4" /></button>
+                                                        <button onClick={() => setProductToDelete(p.id)} className="p-2 bg-red-50 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className={`grid grid-cols-2 gap-y-3 pt-3 border-t border-slate-50 text-[11px] font-bold`}>
+                                                {productCardStats.map(stat => (
+                                                    <div key={stat.id}>
+                                                        <p className="text-slate-400 uppercase text-[8px] leading-tight mb-0.5">{stat.name}</p>
+                                                        <p className={stat.color}>{formatMoney(getDynamicStatValue(mockedProductSale, stat.id, false, null, true))}</p>
+                                                    </div>
+                                                ))}
+                                                {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id)).map(cstat => (
+                                                    <div key={cstat.id}>
+                                                        <p className="text-slate-400 uppercase text-[8px] leading-tight mb-0.5"><Icon name="zap" className="w-2 h-2 inline text-primary" /> {cstat.name}</p>
+                                                        <p className="text-slate-700">{formatMoney(getDynamicStatValue(mockedProductSale, null, true, cstat, true))}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )})}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* VENTAS */}
+                        {activeTab === 'ventas' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+                                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                                        <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2">
+                                            <Icon name="shopping-bag" className="text-primary" /> Ventas
+                                        </h2>
+                                        <button onClick={() => { setIsCreatingSale(true); setCart([]); setEditingSaleId(null); setPaymentMethod(settings.payments[0]?.id); setSaleDate(new Date().toISOString().slice(0, 16)); }} className="w-full sm:w-auto bg-primary text-white px-5 py-2.5 rounded-2xl font-bold shadow-md shadow-primary-glow">
+                                            + Registrar Venta
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="mt-4 pt-4 border-t border-slate-50 flex flex-col md:flex-row gap-4">
+                                        <DateFilterSelector filter={salesDateFilter} setFilter={setSalesDateFilter} label="Filtro de Fecha" />
+                                        <div className="flex flex-col gap-2">
+                                            <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest">Atributos</label>
+                                            <div className="flex flex-wrap gap-2">
+                                                <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
+                                                    <FilterButton id="todos" current={salesListFilter} label="Todos" type="cat" onClick={() => toggleFilter(salesListFilter, setSalesListFilter, 'todos')} />
+                                                    {settings.categories.map(cat => <FilterButton key={cat.id} id={cat.id} current={salesListFilter} label={cat.name} type="cat" onClick={() => toggleFilter(salesListFilter, setSalesListFilter, cat.id)} />)}
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
+                                                    <FilterButton id="todos" current={salesPaymentFilter} label="Todos" type="pay" onClick={() => toggleFilter(salesPaymentFilter, setSalesPaymentFilter, 'todos')} />
+                                                    {settings.payments.map(pay => <FilterButton key={pay.id} id={pay.id} current={salesPaymentFilter} label={pay.name} type="pay" onClick={() => toggleFilter(salesPaymentFilter, setSalesPaymentFilter, pay.id)} />)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {isCreatingSale && (
+                                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                                        <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl animate-fade-in">
+                                            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                                                <div className="flex flex-col md:flex-row md:items-center gap-3">
+                                                    <h3 className="text-xl font-bold">{editingSaleId ? 'Editar Venta' : 'Nueva Venta'}</h3>
+                                                    <input 
+                                                        type="datetime-local" 
+                                                        value={saleDate} 
+                                                        onChange={e => setSaleDate(e.target.value)} 
+                                                        className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-primary w-fit"
+                                                    />
+                                                </div>
+                                                <button onClick={() => { setIsCreatingSale(false); setEditingSaleId(null); setCart([]); }} className="text-slate-400 p-2 hover:bg-slate-100 rounded-xl"><Icon name="x" className="w-4 h-4" /></button>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto p-6 grid md:grid-cols-2 gap-8">
+                                                <div>
+                                                    <div className="flex justify-between items-center mb-4">
+                                                        <h4 className="font-bold text-slate-500 uppercase text-xs">Catálogo</h4>
+                                                        <select value={salesProductFilter} onChange={e => setSalesProductFilter(e.target.value)} className="text-[10px] font-bold bg-slate-50 p-1 rounded-lg outline-none">
+                                                            <option value="todos">Todos</option>
+                                                            {settings.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div className="grid gap-2">
+                                                        {products.filter(p => salesProductFilter === 'todos' || (Array.isArray(p.category) ? p.category : [p.category]).includes(salesProductFilter)).map(p => {
+                                                            const pCats = Array.isArray(p.category) ? p.category : [p.category];
+                                                            const cat = getCatSettings(pCats[0] || 'default');
+                                                            const cartItem = cart.find(i => i.product.id === p.id);
+                                                            const qtyInCart = cartItem ? cartItem.quantity : 0;
+                                                            const availableStock = (p.stock || 0) - qtyInCart;
+                                                            const isOutOfStock = availableStock <= 0;
+                                                            
+                                                            return (
+                                                            <button 
+                                                                key={p.id} 
+                                                                disabled={isOutOfStock}
+                                                                onClick={() => { 
+                                                                    if (isOutOfStock) return;
+                                                                    setCart(prev => { const ex = prev.find(i => i.product.id === p.id); return ex ? prev.map(i => i.product.id === p.id ? { ...i, quantity: i.quantity + 1 } : i) : [...prev, { product: p, quantity: 1 }]; }); 
+                                                                }} 
+                                                                className={`flex justify-between items-center p-3 rounded-2xl border transition-all text-left ${isOutOfStock ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed grayscale' : 'bg-slate-50 border-slate-100 hover:bg-white hover:border-primary group'}`}>
+                                                                <div>
+                                                                    <p className="font-bold text-sm">{p.name}</p>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <p className="text-xs font-black text-primary">{formatMoney(p.price)}</p>
+                                                                        <span className={`text-[9px] font-bold ${availableStock > 0 ? 'text-green-500' : 'text-red-500'}`}>• Disp: {availableStock}</span>
+                                                                    </div>
+                                                                </div>
+                                                                <div style={{backgroundColor: isOutOfStock ? '#cbd5e1' : cat.color, color: isOutOfStock ? '#64748b' : cat.textColor}} className={`w-8 h-8 rounded-full flex items-center justify-center shadow-sm transition-transform opacity-90 ${isOutOfStock ? '' : 'group-hover:scale-110'}`}>
+                                                                    <Icon name={isOutOfStock ? "ban" : "plus"} className="w-4 h-4" />
+                                                                </div>
+                                                            </button>
+                                                        )})}
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col h-full bg-slate-50 rounded-3xl p-6 border border-slate-200">
+                                                    <h4 className="font-bold text-slate-500 uppercase text-xs mb-4">Carrito</h4>
+                                                    <div className="flex-1 space-y-3 overflow-y-auto mb-4 pr-2">
+                                                        {cart.map(item => (
+                                                            <div key={item.product.id} className="bg-white p-3 rounded-2xl flex justify-between items-center shadow-sm">
+                                                                <div className="text-xs">
+                                                                    <p className="font-bold">{item.product.name}</p>
+                                                                    <p className="text-slate-400">{formatMoney(item.product.price * item.quantity)}</p>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <input type="number" min="1" max={item.product.stock || 0} value={item.quantity} onChange={e => { 
+                                                                        let qty = parseInt(e.target.value); 
+                                                                        if(!isNaN(qty) && qty > 0) {
+                                                                            const maxStock = item.product.stock || 0;
+                                                                            if (qty > maxStock) qty = maxStock;
+                                                                            setCart(prev => prev.map(i => i.product.id === item.product.id ? { ...i, quantity: qty } : i));
+                                                                        } 
+                                                                    }} className="w-10 text-center bg-slate-50 rounded-lg text-xs font-bold p-1 outline-none ring-1 ring-slate-100" />
+                                                                    <button onClick={() => setCart(prev => prev.filter(i => i.product.id !== item.product.id))} className="text-red-400 p-1 hover:bg-red-50 rounded-lg"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    <div className="space-y-4 pt-4 border-t border-slate-200">
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {settings.payments.map(pay => (
+                                                                <button key={pay.id} onClick={() => setPaymentMethod(pay.id)} style={paymentMethod === pay.id ? {backgroundColor: pay.color, color: pay.textColor} : {}} className={`flex-1 min-w-[100px] py-2 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm ${paymentMethod !== pay.id ? 'bg-white text-slate-400 ring-1 ring-slate-200' : ''}`}>{pay.name}</button>
+                                                            ))}
+                                                        </div>
+                                                        
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-slate-400 font-bold text-xs uppercase">Total:</span>
+                                                            <span className="text-2xl font-black text-primary">
+                                                                {formatMoney(cart.reduce((s, i) => s + (i.product.price * i.quantity), 0))}
+                                                            </span>
+                                                        </div>
+                                                        <button 
+                                                            onClick={handleSaveSale} 
+                                                            disabled={cart.length === 0} 
+                                                            className={`w-full py-4 rounded-2xl font-bold transition-all active:scale-[0.98] ${cart.length > 0 ? 'bg-primary text-white shadow-lg shadow-primary-glow' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                                                            {editingSaleId ? 'Actualizar Venta' : 'Finalizar Venta'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {groupedSalesArray.map(({ date, sales: salesInDate }) => (
+                                    <div key={date} className="mb-8">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="h-px bg-slate-200 flex-1"></div>
+                                            <span className="text-xs font-black text-slate-500 uppercase tracking-widest px-3 py-1.5 bg-white rounded-xl border border-slate-200 shadow-sm flex items-center gap-2">
+                                                <Icon name="calendar" className="w-3 h-3 text-primary" /> {date}
+                                            </span>
+                                            <div className="h-px bg-slate-200 flex-1"></div>
+                                        </div>
+                                        <div className="space-y-4">
+                                            {salesInDate.map(sale => {
+                                                const pay = getPaySettings(sale.paymentMethod);
+                                                return (
+                                                <div key={sale.id} className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 mb-2 text-[10px] font-black uppercase">
+                                                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-md uppercase font-black">{sale.id}</span>
+                                                            <span className="text-slate-400 font-bold">{sale.date.split(',')[1]?.trim() || sale.date}</span>
+                                                            <span style={{backgroundColor: pay.color, color: pay.textColor}} className="px-2 py-0.5 rounded shadow-sm opacity-90">{pay.name}</span>
+                                                        </div>
+                                                        <p className="text-sm font-bold text-slate-700 mb-3">{sale.items.map(i => `${i.quantity}x ${i.product.name}`).join(', ')}</p>
+                                                        
+                                                        {/* Desglose de Tarjeta de Venta Dinámica */}
+                                                        <div className="flex flex-wrap gap-2 bg-slate-50 p-3 rounded-2xl text-[10px] font-bold border border-slate-100">
+                                                            {tableDisplayStats.map(stat => (
+                                                                <div key={stat.id} className="min-w-[70px]">
+                                                                    <p className="text-slate-400 uppercase text-[8px] leading-tight mb-0.5">{stat.name}</p>
+                                                                    <p className={stat.color}>{formatMoney(getDynamicStatValue(sale, stat.id))}</p>
+                                                                </div>
+                                                            ))}
+                                                            {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id) && (!Array.isArray(cstat.paymentMethods) || cstat.paymentMethods.length === 0 || cstat.paymentMethods.includes(sale.paymentMethod))).map((cstat, idx) => (
+                                                                <div key={`c-${idx}`} className="min-w-[70px]">
+                                                                    <p className="text-slate-400 uppercase text-[8px] leading-tight mb-0.5"><Icon name="zap" className="w-2 h-2 inline text-primary" /> {cstat.name}</p>
+                                                                    <p className="text-slate-700">{formatMoney(getDynamicStatValue(sale, null, true, cstat))}</p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => setSelectedSaleReceipt(sale)} className="flex-1 bg-slate-50 text-slate-500 px-4 py-3 rounded-2xl font-bold border border-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors"><Icon name="receipt-text" className="w-5 h-5" /></button>
+                                                        <button onClick={() => { setEditingSaleId(sale.id); setCart(sale.items); setPaymentMethod(sale.paymentMethod); setIsCreatingSale(true); setSaleDate(new Date(sale.isoDate || new Date()).toISOString().slice(0, 16)); }} className="flex-1 bg-primary/10 text-primary px-4 py-3 rounded-2xl font-bold hover:bg-primary hover:text-white flex items-center justify-center transition-colors"><Icon name="edit-3" className="w-5 h-5" /></button>
+                                                        <button onClick={() => setSaleToDelete(sale.id)} className="flex-1 bg-red-50 text-red-400 px-4 py-3 rounded-2xl font-bold hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors"><Icon name="trash-2" className="w-5 h-5" /></button>
+                                                    </div>
+                                                </div>
+                                            )})}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* INVENTARIO */}
+                        {activeTab === 'inventario' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100">
+                                    <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2 mb-5">
+                                        <Icon name="list-checks" className="text-primary" /> Historial
+                                    </h2>
+                                    <div className="flex flex-col md:flex-row gap-4 mb-2">
+                                        <DateFilterSelector filter={reportDateFilter} setFilter={setReportDateFilter} label="Filtro de Fecha" />
+                                        <div className="flex-1">
+                                            <label className="text-[10px] font-black uppercase text-slate-400 block mb-2 tracking-widest">Categoría</label>
+                                            <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl w-fit max-w-full">
+                                                <FilterButton id="todos" current={reportCategoryFilter} label="Todos" type="cat" onClick={() => toggleFilter(reportCategoryFilter, setReportCategoryFilter, 'todos')} />
+                                                {settings.categories.map(cat => <FilterButton key={cat.id} id={cat.id} current={reportCategoryFilter} label={cat.name} type="cat" onClick={() => toggleFilter(reportCategoryFilter, setReportCategoryFilter, cat.id)} />)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Tabla de Historial Dinámica */}
+                                <div className="sold-table-container pb-4">
+                                    <table className="sold-table">
+                                        <thead>
+                                            <tr>
+                                                <th className="w-14 text-center">Cant.</th>
+                                                <th>Producto</th>
+                                                {tableDisplayStats.map(stat => (
+                                                    <th key={stat.id}>{stat.name}</th>
+                                                ))}
+                                                {settings.customStats.filter(stat => !settings.hiddenStats.includes(stat.id)).map(stat => (
+                                                    <th key={stat.id}><Icon name="zap" className="w-2 h-2 inline text-primary" /> {stat.name}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {soldProductsData.map((p) => {
+                                                const cats = Array.isArray(p.category) ? p.category : [p.category];
+                                                return (
+                                                <tr key={p.id} className="group transition-transform">
+                                                    <td className="text-center">
+                                                        <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto text-sm font-black bg-primary/10 text-primary">{p.quantity}</div>
+                                                    </td>
+                                                    <td>
+                                                        <div className="flex flex-col">
+                                                            <span className="font-bold text-slate-800 leading-tight">{p.name}</span>
+                                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                                {cats.map(cId => {
+                                                                    const cat = getCatSettings(cId);
+                                                                    return <span key={cId} style={{backgroundColor: cat.color, color: cat.textColor}} className="text-[8px] uppercase font-black w-fit px-1.5 py-0.5 rounded opacity-90">{cat.name}</span>
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    {tableDisplayStats.map(stat => (
+                                                        <td key={stat.id} className={`text-xs font-bold ${stat.color}`}>
+                                                            {formatMoney(getDynamicStatValue(p, stat.id, false, null, true))}
+                                                        </td>
+                                                    ))}
+                                                    {settings.customStats.filter(cstat => !settings.hiddenStats.includes(cstat.id)).map(cstat => (
+                                                        <td key={cstat.id} className="text-xs font-bold text-slate-700">
+                                                            {formatMoney(getDynamicStatValue(p, null, true, cstat, true))}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            )})}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* REPORTES */}
+                        {activeTab === 'reportes' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100">
+                                    <div className="flex justify-between items-center mb-5">
+                                        <h2 className="text-2xl font-bold text-slate-700 flex items-center gap-2">
+                                            <Icon name="pie-chart" className="text-primary" /> Reportes
+                                        </h2>
+                                        <button onClick={handleExportPDF} className="p-2 bg-slate-50 text-slate-500 rounded-xl hover:bg-primary hover:text-white transition-all flex items-center gap-2 border border-slate-100">
+                                            <Icon name="file-text" className="w-5 h-5" />
+                                            <span className="text-xs font-bold hidden sm:inline uppercase tracking-widest">Descargar PDF</span>
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="flex flex-col md:flex-row gap-4">
+                                        <DateFilterSelector filter={reportDateFilter} setFilter={setReportDateFilter} label="Corte de Caja" />
+                                        <div className="flex-1 flex flex-col gap-3">
+                                            <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest">Categoría</label>
+                                            <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl w-fit max-w-full">
+                                                <FilterButton id="todos" current={reportCategoryFilter} label="Todos" type="cat" onClick={() => toggleFilter(reportCategoryFilter, setReportCategoryFilter, 'todos')} />
+                                                {settings.categories.map(cat => <FilterButton key={cat.id} id={cat.id} current={reportCategoryFilter} label={cat.name} type="cat" onClick={() => toggleFilter(reportCategoryFilter, setReportCategoryFilter, cat.id)} />)}
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 flex flex-col gap-3">
+                                            <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest">Tipo de Pago</label>
+                                            <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl w-fit max-w-full">
+                                                <FilterButton id="todos" current={reportPaymentFilter} label="Todos" type="pay" onClick={() => toggleFilter(reportPaymentFilter, setReportPaymentFilter, 'todos')} />
+                                                {settings.payments.map(pay => <FilterButton key={pay.id} id={pay.id} current={reportPaymentFilter} label={pay.name} type="pay" onClick={() => toggleFilter(reportPaymentFilter, setReportPaymentFilter, pay.id)} />)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <StatsDashboard statsData={stats} title="Resumen Financiero General" />
+                            </div>
+                        )}
+
+                        {/* COBRO */}
+                        {activeTab === 'transferencia' && (
+                            <div className="space-y-6 animate-fade-in pb-10">
+                                <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold text-slate-700 flex items-center gap-2">
+                                        <Icon name="landmark" className="text-primary w-5 h-5" /> Datos Bancarios
+                                    </h2>
+                                    <button onClick={() => setIsEditingTransfer(!isEditingTransfer)} className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:text-primary transition-all">
+                                        <Icon name={isEditingTransfer ? "x" : "edit-2"} className="w-5 h-5" />
+                                    </button>
+                                </div>
+
+                                <div className="bank-card-container p-6 md:p-8">
+                                    <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl pointer-events-none"></div>
+                                    <div className="relative z-10 space-y-6">
+                                        <div className="flex justify-between items-start mb-4">
+                                            {isEditingTransfer ? (
+                                                <input type="text" value={transferData.banco} onChange={e => setTransferData({...transferData, banco: e.target.value})} className="bank-card-input text-xs font-bold uppercase tracking-widest w-40" placeholder="AÑADIR BANCO" />
+                                            ) : (
+                                                <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg border border-white/10">
+                                                    <Icon name="building-2" className="w-4 h-4 text-white" />
+                                                    <span className="text-[10px] font-black uppercase tracking-widest">{transferData.banco || 'BANCO'}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="space-y-1">
+                                            <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Titular de la cuenta</p>
+                                            {isEditingTransfer ? (
+                                                <input type="text" value={transferData.titular} onChange={e => setTransferData({...transferData, titular: e.target.value})} className="bank-card-input text-lg font-bold" placeholder="Añadir nombre" />
+                                            ) : (
+                                                <p className="text-xl font-bold tracking-tight">{transferData.titular || 'Añadir nombre de titular'}</p>
+                                            )}
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                                            <div className="space-y-1">
+                                                <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Cuenta / Tarjeta</p>
+                                                {isEditingTransfer ? <input type="text" value={transferData.cuenta} onChange={e => setTransferData({...transferData, cuenta: e.target.value})} className="bank-card-input font-mono" placeholder="---- ---- ---- ----" /> : <p className="text-lg font-mono tracking-widest opacity-90">{transferData.cuenta || '---- ---- ---- ----'}</p>}
+                                            </div>
+                                            <div className="space-y-1">
+                                                <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Clabe</p>
+                                                {isEditingTransfer ? <input type="text" value={transferData.clabe} onChange={e => setTransferData({...transferData, clabe: e.target.value})} className="bank-card-input font-mono" placeholder="------------------" /> : <p className="text-lg font-mono tracking-tighter opacity-90">{transferData.clabe || '------------------'}</p>}
+                                            </div>
+                                        </div>
+                                        {!isEditingTransfer ? (
+                                            <div className="pt-6 border-t border-white/5">
+                                                <button onClick={copyToClipboard} className="w-full bg-primary hover:opacity-90 text-white py-4 rounded-2xl font-black uppercase text-xs tracking-[0.1em] flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-lg shadow-black/20">
+                                                    {copyStatus ? <><Icon name="check" className="w-4 h-4" /> ¡Datos Copiados!</> : <><Icon name="copy" className="w-4 h-4" /> Copiar Datos</>}
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => setIsEditingTransfer(false)} className="w-full bg-white text-[#1e293b] py-4 rounded-2xl font-black uppercase text-xs tracking-widest mt-4">Guardar Datos</button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* MODALES CONFIRMACIONES DE BORRADO */}
+                    {saleToDelete && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl animate-slide-up sm:animate-fade-in text-center">
+                                <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                                    <Icon name="alert-triangle" className="w-10 h-10" />
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-800 mb-2">¿Eliminar registro?</h3>
+                                <p className="text-sm text-slate-400 font-medium">Esta acción no se puede deshacer y alterará tus estadísticas.</p>
+                                <div className="grid grid-cols-2 gap-3 mt-8">
+                                    <button onClick={() => setSaleToDelete(null)} className="py-4 rounded-2xl bg-slate-100 text-slate-500 font-bold uppercase text-xs tracking-widest transition-colors hover:bg-slate-200">Cancelar</button>
+                                    <button onClick={confirmDeleteSale} className="py-4 rounded-2xl bg-red-500 text-white font-bold shadow-lg shadow-red-500/30 uppercase text-xs tracking-widest transition-transform active:scale-95">Sí, eliminar</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {productToDelete && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl animate-slide-up sm:animate-fade-in text-center">
+                                <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                                    <Icon name="package-x" className="w-10 h-10" />
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-800 mb-2">¿Eliminar producto?</h3>
+                                <p className="text-sm text-slate-400 font-medium">Se quitará de forma permanente del catálogo.</p>
+                                <div className="grid grid-cols-2 gap-3 mt-8">
+                                    <button onClick={() => setProductToDelete(null)} className="py-4 rounded-2xl bg-slate-100 text-slate-500 font-bold uppercase text-xs tracking-widest transition-colors hover:bg-slate-200">Cancelar</button>
+                                    <button onClick={confirmDeleteProduct} className="py-4 rounded-2xl bg-red-500 text-white font-bold shadow-lg shadow-red-500/30 uppercase text-xs tracking-widest transition-transform active:scale-95">Eliminar</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {profileToDelete && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl animate-slide-up sm:animate-fade-in text-center">
+                                <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                                    <Icon name="briefcase" className="w-10 h-10" />
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-800 mb-2">¿Eliminar este negocio?</h3>
+                                <p className="text-sm text-slate-400 font-medium">Se borrarán permanentemente su catálogo, ventas y ajustes. Esta acción no se puede deshacer.</p>
+                                <div className="grid grid-cols-2 gap-3 mt-8">
+                                    <button onClick={() => setProfileToDelete(null)} className="py-4 rounded-2xl bg-slate-100 text-slate-500 font-bold uppercase text-xs tracking-widest transition-colors hover:bg-slate-200">Cancelar</button>
+                                    <button onClick={confirmDeleteProfile} className="py-4 rounded-2xl bg-red-500 text-white font-bold shadow-lg shadow-red-500/30 uppercase text-xs tracking-widest transition-transform active:scale-95">Sí, eliminar</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* TICKET DE VENTA */}
+                    {selectedSaleReceipt && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-[300px] rounded-[2rem] overflow-hidden shadow-2xl relative animate-fade-in">
+                                <button onClick={() => setSelectedSaleReceipt(null)} className="absolute top-4 right-4 text-white hover:opacity-75 z-10 bg-black/10 rounded-full p-1 backdrop-blur-sm"><Icon name="x" className="w-5 h-5" /></button>
+                                <div className="bg-primary text-white text-center p-6 flex flex-col items-center">
+                                    <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-2">
+                                        <img src={settings.logoUrl || "logo_blanco.png"} alt="Logo" className={`w-10 h-10 object-contain ${isDefaultLogo ? 'header-logo' : ''}`} onError={(e) => e.target.style.display='none'} />
+                                    </div>
+                                    <h3 className="text-xl font-black tracking-widest uppercase">{settings.companyName}</h3>
+                                </div>
+                                <div className="p-6">
+                                    <div className="text-center text-[9px] font-bold text-slate-400 mb-5 uppercase tracking-widest">
+                                        <p>ID: {selectedSaleReceipt.id}</p>
+                                        <p>{new Date(selectedSaleReceipt.isoDate).toLocaleString()}</p>
+                                        <p className="mt-1 font-black text-primary">{getPaySettings(selectedSaleReceipt.paymentMethod).name}</p>
+                                    </div>
+                                    <div className="space-y-3 mb-5 border-t border-dashed border-slate-200 pt-4">
+                                        {selectedSaleReceipt.items.map((item, idx) => (
+                                            <div key={idx} className="flex justify-between items-start">
+                                                <div className="flex flex-col"><span className="text-xs font-black text-slate-800">{item.product.name}</span><span className="text-[9px] font-bold text-slate-400">{item.quantity} x {formatMoney(item.product.price)}</span></div>
+                                                <span className="text-xs font-black text-slate-800">{formatMoney(item.product.price * item.quantity)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="border-t border-dashed border-slate-200 pt-4 mb-2">
+                                        <div className="flex justify-between items-end">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase">Total Pagado</span>
+                                            <span className="text-2xl font-black text-primary">{formatMoney(selectedSaleReceipt.totalVenta)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-50 p-4 rounded-2xl text-center mt-5 border border-slate-100 shadow-sm">
+                                        <p className="text-[12px] font-black text-slate-700">¡Gracias por tu compra!</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <nav className="no-print fixed bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-100 flex justify-around p-3 z-40 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] overflow-x-auto">
+                        {[
+                            { id: 'productos', icon: 'package', label: 'Catálogo' },
+                            { id: 'transferencia', icon: 'credit-card', label: 'Cobro' },
+                            { id: 'ventas', icon: 'shopping-bag', label: 'Ventas' },
+                            { id: 'inventario', icon: 'list-checks', label: 'Historial' },
+                            { id: 'reportes', icon: 'pie-chart', label: 'Reportes' },
+                            { id: 'perfil', icon: 'user', label: 'Perfil' }
+                        ].map(t => (
+                            <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center gap-1 p-2 md:p-3 rounded-2xl transition-all duration-300 min-w-[60px] ${activeTab === t.id ? 'bg-primary text-white shadow-lg shadow-primary-glow' : 'text-slate-400 hover:text-slate-600'}`}>
+                                <Icon name={t.icon} className="w-5 h-5 md:w-6 md:h-6" />
+                                {activeTab === t.id && <span className="text-[8px] font-black uppercase whitespace-nowrap">{t.label}</span>}
+                            </button>
+                        ))}
+                    </nav>
+                </div>
+            );
+        }
+
+        // ===== PANTALLA DE ACCESO (Netlify Identity) =====
+        function AuthGate() {
+            const [status, setStatus] = useState('loading'); // loading | login | ready
+            const [identityApi, setIdentityApi] = useState(null);
+            const [mode, setMode] = useState('login'); // login | signup
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [fullName, setFullName] = useState('');
+            const [authError, setAuthError] = useState('');
+            const [busy, setBusy] = useState(false);
+
+            useEffect(() => {
+                (async () => {
+                    try {
+                        const api = await import('https://cdn.jsdelivr.net/npm/@netlify/identity/+esm');
+                        setIdentityApi(api);
+                        try { await api.handleAuthCallback(); } catch (e) { /* no había callback pendiente */ }
+                        const user = await api.getUser();
+                        if (user) {
+                            window.__cloudSyncEnabled = true;
+                            await window.__pullFromCloud();
+                            setStatus('ready');
+                        } else {
+                            setStatus('login');
+                        }
+                    } catch (e) {
+                        console.error('Error inicializando Netlify Identity:', e);
+                        setAuthError('No se pudo cargar el sistema de acceso. Revisa tu conexión.');
+                        setStatus('login');
+                    }
+                })();
+            }, []);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!identityApi) return;
+                setBusy(true);
+                setAuthError('');
+                try {
+                    if (mode === 'login') {
+                        await identityApi.login(email, password);
+                    } else {
+                        await identityApi.signup(email, password, { full_name: fullName });
+                    }
+                    const user = await identityApi.getUser();
+                    if (user) {
+                        window.__cloudSyncEnabled = true;
+                        await window.__pullFromCloud();
+                        setStatus('ready');
+                    } else {
+                        setAuthError('Cuenta creada. Revisa tu correo para confirmarla antes de entrar.');
+                    }
+                } catch (err) {
+                    setAuthError(err.message || 'No se pudo completar la operación.');
+                } finally {
+                    setBusy(false);
+                }
+            };
+
+            if (status === 'loading') {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                        <div className="text-slate-400 font-black text-xs uppercase tracking-widest">Cargando...</div>
+                    </div>
+                );
+            }
+
+            if (status === 'login') {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+                        <form onSubmit={handleSubmit} className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-4">
+                            <h1 className="text-xl font-black text-slate-800 text-center mb-2">
+                                {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+                            </h1>
+                            {mode === 'signup' && (
+                                <input type="text" placeholder="Nombre" value={fullName} onChange={e => setFullName(e.target.value)}
+                                    className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" required />
+                            )}
+                            <input type="email" placeholder="Correo" value={email} onChange={e => setEmail(e.target.value)}
+                                className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" required />
+                            <input type="password" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)}
+                                className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 outline-none font-bold" required minLength={6} />
+                            {authError && <p className="text-red-500 text-xs font-bold">{authError}</p>}
+                            <button type="submit" disabled={busy}
+                                className="w-full bg-primary text-white py-3 rounded-2xl font-black uppercase text-xs tracking-widest disabled:opacity-50">
+                                {busy ? 'Un momento...' : (mode === 'login' ? 'Entrar' : 'Registrarme')}
+                            </button>
+                            <button type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setAuthError(''); }}
+                                className="w-full text-slate-400 text-xs font-bold">
+                                {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+                            </button>
+                        </form>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="relative">
+                    <button
+                        onClick={async () => { await identityApi.logout(); window.__cloudSyncEnabled = false; window.location.reload(); }}
+                        className="fixed top-3 right-3 z-[100] bg-white/90 backdrop-blur-md shadow-md text-slate-500 text-[9px] font-black uppercase px-3 py-2 rounded-xl"
+                    >
+                        Cerrar sesión
+                    </button>
+                    <App />
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<AuthGate />);
+    </script>
+</body>
+</html>
