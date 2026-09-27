@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@netlify/identity": "latest",
     "@netlify/blobs": "latest"
   }
 }

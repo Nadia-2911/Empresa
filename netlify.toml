@@ -3,3 +3,8 @@
 
 [functions]
   node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/empresa-data"
+  to = "/.netlify/functions/empresa-data"
+  status = 200
