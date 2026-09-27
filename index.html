@@ -2216,7 +2216,17 @@
                     return;
                 }
 
+                // El widget a veces deja un "#access_token=..." (u otro token) pegado en la URL
+                // después de procesar el login/confirmación. Aunque no se vea, ese sobrante puede
+                // dejar bloqueados los clics. Lo quitamos de la barra de direcciones sin recargar.
+                const clearAuthHash = () => {
+                    if (window.location.hash) {
+                        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+                    }
+                };
+
                 identity.on('init', async (user) => {
+                    clearAuthHash();
                     if (user) {
                         window.__cloudSyncEnabled = true;
                         await window.__pullFromCloud();
@@ -2231,20 +2241,26 @@
                     await window.__pullFromCloud();
                     setStatus('ready');
                     identity.close();
+                    clearAuthHash();
                 });
 
                 identity.on('logout', () => {
                     window.__cloudSyncEnabled = false;
+                    clearAuthHash();
                     window.location.reload();
                 });
 
                 identity.on('error', (err) => {
                     console.error('Error de Netlify Identity:', err);
                     setAuthError('Ocurrió un error con el inicio de sesión.');
+                    clearAuthHash();
                 });
 
                 // init() dispara el evento 'init' de arriba con el usuario actual (o null)
                 identity.init();
+                // Red de seguridad: si por alguna razón ningún evento de arriba llegó a
+                // disparar, igual limpiamos la URL medio segundo después.
+                setTimeout(clearAuthHash, 800);
             }, []);
 
             if (status === 'loading') {
