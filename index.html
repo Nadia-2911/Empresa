@@ -2079,7 +2079,7 @@
             useEffect(() => {
                 (async () => {
                     try {
-                        const api = await import('https://cdn.jsdelivr.net/npm/@netlify/identity/+esm');
+                        const api = await import('https://esm.sh/@netlify/identity?bundle');
                         setIdentityApi(api);
                         try { await api.handleAuthCallback(); } catch (e) { /* no había callback pendiente */ }
                         const user = await api.getUser();
